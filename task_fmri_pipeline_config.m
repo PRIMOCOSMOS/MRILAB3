@@ -78,7 +78,7 @@ function cfg = task_fmri_pipeline_config()
     cfg.firstLevel.hrf.ratio = 6;
     cfg.firstLevel.hrf.length = 32;
 
-    % 一级对比（默认：righthand > baseline）
+    % 一级对比（默认：righthand > implicit baseline；因仅1个任务条件，使用标量1）
     cfg.firstLevel.contrastWeights = 1;
 
     % ============================= 可视化参数块 ==============================
