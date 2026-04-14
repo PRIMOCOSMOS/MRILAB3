@@ -900,7 +900,7 @@ end
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
     % Match localized messages (CN/EN) and quote variants for unknown field errors.
-    t = regexp(msg, '无法识别的字段名称\s*["“”]?([^"“”''\s]+)["“”]?', 'tokens', 'once');
+    t = regexp(msg, '无法识别的字段名称[:：\s]*["“”'']?([^"“”''\s]+)', 'tokens', 'once');
     if ~isempty(t)
         fieldName = t{1};
         return;
