@@ -17,19 +17,27 @@
 
 ---
 
-## 数据目录（参考 DPABI 约定）
+## 数据目录（当前默认读取方式）
 
 ```text
-DataRaw/
-  Sub001/
-    anat/ 或 T1Img/
-      *.nii 或 DICOM
-    func/ 或 FunImg/
-      run1/ (可选) -> *.nii 或 DICOM
-      run2/ (可选) -> *.nii 或 DICOM
-  Sub002/
-    ...
+BOLDDATA/
+  FunRaw/
+    Sub001/
+      *.nii(4D) 或 DICOM
+      run1/ (可选) -> *.nii(4D) 或 DICOM
+      run2/ (可选) -> *.nii(4D) 或 DICOM
+    Sub002/
+      ...
+  T1Raw/
+    Sub001/
+      *.nii(3D) 或 DICOM
+    Sub002/
+      ...
 ```
+
+兼容说明：
+- 若 `BOLDDATA/FunRaw` 与 `BOLDDATA/T1Raw` 同时存在，流程优先按上述新结构读取；
+- 若新结构不存在，则自动回退到旧版 `DataRaw/SubXXX/anat|func` 兼容模式。
 
 ---
 
