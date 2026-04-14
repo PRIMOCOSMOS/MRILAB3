@@ -401,7 +401,7 @@ function seg = segment_t1(anat, P)
     x = anatCorr(:);
     x = x(isfinite(x));
     [idx, c] = kmeans(x, 3, 'Replicates', 5, 'MaxIter', 200);
-    [~, order] = sort(c, 'ascend'); %#ok<ASGLU>
+    [~, order] = sort(c, 'ascend');
     mu = zeros(3,1); sd = zeros(3,1);
     for k = 1:3
         v = x(idx==order(k));
@@ -459,6 +459,8 @@ function Xn = build_nuisance_regressors(motion, T, P)
 end
 
 function h = canonical_hrf(TR, H)
+    % 双Gamma HRF:
+    % p1/d1: 主峰 shape/scale; p2/d2: undershoot shape/scale; ratio: 相对幅值比
     t = (0:TR:H.length)';
     g1 = gampdf(t, H.p1, H.d1);
     g2 = gampdf(t, H.p2, H.d2);
@@ -534,7 +536,7 @@ function overlay_slice(bg, ov, m, cm, R)
     alphaMap = zeros(size(m), 'single');
     alphaMap(m>0) = R.overlayAlpha;
     ovn = rescale(ov);
-    h = imagesc(ovn); colormap(gca, gray);
+    h = imagesc(ovn);
     set(h, 'AlphaData', alphaMap);
     hold off;
     c = colorbar; c.Label.String = 'Activation intensity';
@@ -578,6 +580,7 @@ function X = zscore_cols(X)
 end
 
 function sigma = fwhm_to_sigma(fwhmMM, voxMM)
+    % FWHM = 2*sqrt(2*ln(2))*sigma ≈ 2.3548*sigma
     sigma = (fwhmMM ./ max(voxMM, eps)) / 2.3548;
 end
 

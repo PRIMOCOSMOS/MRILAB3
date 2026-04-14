@@ -11,8 +11,8 @@
 
 核心文件：
 
-- `/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m`
-- `/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m`
+- `./run_task_fmri_pipeline.m`
+- `./task_fmri_pipeline_config.m`
 
 ---
 
@@ -65,19 +65,19 @@ Onsets/
 在 MATLAB 2025a 中：
 
 ```matlab
-run('/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m')
+run_task_fmri_pipeline
 ```
 
 参数修改位置：
 
 ```matlab
-/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m
+./task_fmri_pipeline_config.m
 ```
 
 输出目录：
 
 ```text
-/home/runner/work/MRILAB3/MRILAB3/Derivatives/
+./Derivatives/
 ```
 
 每个被试可见：

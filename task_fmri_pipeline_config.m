@@ -23,6 +23,8 @@ function cfg = task_fmri_pipeline_config()
     cfg.preproc.nslices = 36;
     cfg.preproc.sliceOrder = [1:2:35, 2:2:36];
     cfg.preproc.refSlice = 18;
+    assert(numel(cfg.preproc.sliceOrder) == cfg.preproc.nslices, ...
+        'sliceOrder 长度必须与 nslices 一致。');
 
     % Realign/Coreg 参数
     cfg.preproc.realignPyramidLevels = 3;
