@@ -847,14 +847,16 @@ function write_nifti_like(vol, refInfo, pathOut)
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol);
     if numel(info.ImageSize)==2, info.ImageSize(3)=1; end
-    niftiwrite(single(vol), pathOut, info, 'Compressed', false);
+    info.Datatype = class(single(vol));
+    safe_niftiwrite(single(vol), pathOut, info);
 end
 
 function write_nifti_4d(vol4d, refInfo, pathOut)
     ensure_dir(fileparts(pathOut));
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol4d);
-    niftiwrite(single(vol4d), pathOut, info, 'Compressed', false);
+    info.Datatype = class(single(vol4d));
+    safe_niftiwrite(single(vol4d), pathOut, info);
 end
 
 function infoOut = sanitize_nifti_info_for_write(infoIn)
@@ -870,6 +872,37 @@ function infoOut = sanitize_nifti_info_for_write(infoIn)
         if isfield(infoIn, k)
             infoOut.(k) = infoIn.(k);
         end
+    end
+end
+
+function safe_niftiwrite(vol, pathOut, info)
+    infoTry = info;
+    for k = 1:12
+        try
+            niftiwrite(vol, pathOut, infoTry, 'Compressed', false);
+            return;
+        catch ME
+            badField = extract_unknown_info_field(ME.message);
+            if ~isempty(badField) && isfield(infoTry, badField)
+                infoTry = rmfield(infoTry, badField);
+                continue;
+            end
+            break;
+        end
+    end
+    niftiwrite(vol, pathOut, 'Compressed', false);
+end
+
+function fieldName = extract_unknown_info_field(msg)
+    fieldName = '';
+    t = regexp(msg, '无法识别的字段名称\s*["“”]?([^"“”''\s]+)["“”]?', 'tokens', 'once');
+    if ~isempty(t)
+        fieldName = t{1};
+        return;
+    end
+    t = regexp(msg, 'Unrecognized field name\s*''([^'']+)''', 'tokens', 'once');
+    if ~isempty(t)
+        fieldName = t{1};
     end
 end
 
