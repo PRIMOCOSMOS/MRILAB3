@@ -414,6 +414,8 @@ end
 % ============================== I/O 与工具函数 ============================
 function [V, info] = read_single_volume(inputDir, outDir)
     ensure_dir(outDir);
+    outPath = fullfile(outDir, 'anat_raw.nii');
+    wroteFromDicom = false;
     nii = dir(fullfile(inputDir, '*.nii*'));
     if ~isempty(nii)
         p = fullfile(nii(1).folder, nii(1).name);
@@ -423,9 +425,12 @@ function [V, info] = read_single_volume(inputDir, outDir)
     else
         dcm = dir(fullfile(inputDir, '**', '*.dcm'));
         assert(~isempty(dcm), '结构像目录中无 NIfTI 或 DICOM。');
-        [V, info] = dicom_series_to_volume(dcm);
+        [V, info] = convert_dicom_to_nifti_3d(dcm, outPath);
+        wroteFromDicom = true;
     end
-    write_nifti_like(V, info, fullfile(outDir, 'anat_raw.nii'));
+    if ~wroteFromDicom
+        write_nifti_like(V, info, outPath);
+    end
 end
 
 function [runs, infos] = read_functional_runs(funcDir, outDir)
@@ -447,6 +452,15 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
     d = dir(funcDir);
     d = d([d.isdir]);
     d = d(~startsWith({d.name}, '.'));
+    if isempty(d)
+        dcmTop = dir(fullfile(funcDir, '**', '*.dcm'));
+        if ~isempty(dcmTop)
+            outPath = fullfile(outDir, 'run01_raw.nii');
+            [V, info] = convert_dicom_to_nifti_4d(dcmTop, outPath);
+            runs{1} = V; infos{1} = info; %#ok<AGROW>
+            return;
+        end
+    end
     for i = 1:numel(d)
         runDir = fullfile(funcDir, d(i).name);
         nii = dir(fullfile(runDir, '*.nii*'));
@@ -455,13 +469,15 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
             info = niftiinfo(p);
             V = single(niftiread(info));
             assert(ndims(V) == 4, 'run %s 需为4D。', d(i).name);
+            write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
         else
             dcm = dir(fullfile(runDir, '**', '*.dcm'));
-            [V, info] = dicom_series_to_4d(dcm);
+            assert(~isempty(dcm), 'run %s 目录中无 NIfTI 或 DICOM。', d(i).name);
+            outPath = fullfile(outDir, sprintf('run%02d_raw.nii', i));
+            [V, info] = convert_dicom_to_nifti_4d(dcm, outPath);
         end
         runs{end + 1} = V; %#ok<AGROW>
         infos{end + 1} = info; %#ok<AGROW>
-        write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
     end
 end
 
@@ -847,14 +863,16 @@ function write_nifti_like(vol, refInfo, pathOut)
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol);
     if numel(info.ImageSize)==2, info.ImageSize(3)=1; end
-    niftiwrite(single(vol), pathOut, info, 'Compressed', false);
+    info.Datatype = 'single';
+    safe_niftiwrite(single(vol), pathOut, info);
 end
 
 function write_nifti_4d(vol4d, refInfo, pathOut)
     ensure_dir(fileparts(pathOut));
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol4d);
-    niftiwrite(single(vol4d), pathOut, info, 'Compressed', false);
+    info.Datatype = 'single';
+    safe_niftiwrite(single(vol4d), pathOut, info);
 end
 
 function infoOut = sanitize_nifti_info_for_write(infoIn)
@@ -873,7 +891,50 @@ function infoOut = sanitize_nifti_info_for_write(infoIn)
     end
 end
 
-function [V, info] = dicom_series_to_volume(dcmList)
+function safe_niftiwrite(vol, pathOut, info)
+    infoTry = info;
+    % Keep at least a few retries even for tiny headers, and allow a small buffer
+    % beyond current field count for version-specific parser behavior.
+    % 4: enough attempts for very small headers; +2: tolerate parser-side extra checks.
+    minStripAttempts = 4;
+    extraStripAttempts = 2;
+    maxStripAttempts = max(minStripAttempts, numel(fieldnames(infoTry)) + extraStripAttempts);
+    for k = 1:maxStripAttempts
+        try
+            niftiwrite(vol, pathOut, infoTry, 'Compressed', false);
+            return;
+        catch ME
+            badField = extract_unknown_info_field(ME.message);
+            if ~isempty(badField) && isfield(infoTry, badField)
+                infoTry = rmfield(infoTry, badField);
+                continue;
+            end
+            break;
+        end
+    end
+    warning('niftiwrite:InfoFallback', ...
+        'Failed to keep compatible NIfTI header for %s; fallback to write without Info.', pathOut);
+    niftiwrite(vol, pathOut, 'Compressed', false);
+end
+
+function fieldName = extract_unknown_info_field(msg)
+    fieldName = '';
+    % Match localized messages (CN/EN); quoteClass includes: ", “, ”, and '.
+    quoteClass = '"“”''';
+    cnUnknownFieldPattern = ['无法识别的字段名称[:：\s]*[', quoteClass, ']?([^', quoteClass, '\s]+)'];
+    t = regexp(msg, cnUnknownFieldPattern, 'tokens', 'once');
+    if ~isempty(t)
+        fieldName = t{1};
+        return;
+    end
+    enUnknownFieldPattern = 'Unrecognized field name\s*''([^'']+)''';
+    t = regexp(msg, enUnknownFieldPattern, 'tokens', 'once');
+    if ~isempty(t)
+        fieldName = t{1};
+    end
+end
+
+function V = dicom_series_to_volume(dcmList)
     files = fullfile({dcmList.folder}, {dcmList.name});
     z = zeros(numel(files), 1);
     for i = 1:numel(files)
@@ -885,10 +946,9 @@ function [V, info] = dicom_series_to_volume(dcmList)
     s = dicomread(files{1});
     V = zeros([size(s), numel(files)], 'single');
     for i = 1:numel(files), V(:,:,i) = single(dicomread(files{i})); end
-    info = niftiinfo_from_dicom(files{1}, size(V));
 end
 
-function [V4d, info] = dicom_series_to_4d(dcmList)
+function V4d = dicom_series_to_4d(dcmList)
     assert(~isempty(dcmList), 'DICOM 列表为空。');
     files = fullfile({dcmList.folder}, {dcmList.name});
     hdr = cell(numel(files), 1);
@@ -917,21 +977,22 @@ function [V4d, info] = dicom_series_to_4d(dcmList)
             V4d(:,:,z,t) = single(dicomread(files{idx(z)}));
         end
     end
-    info = niftiinfo_from_dicom(files{idxT1(ordZ(1))}, size(V4d));
 end
 
-function info = niftiinfo_from_dicom(oneFile, imgSize)
-    h = dicominfo(oneFile);
-    info = struct();
-    info.ImageSize = imgSize;
-    info.Datatype = 'single';
-    info.SpaceUnits = 'Millimeter';
-    info.TimeUnits = 'Second';
-    if isfield(h,'PixelSpacing')
-        px = double(h.PixelSpacing(:)');
-    else
-        px = [1 1];
-    end
-    if isfield(h,'SliceThickness'), st = double(h.SliceThickness); else, st = 1; end
-    info.PixelDimensions = [px st 1];
+function [V, info] = convert_dicom_to_nifti_3d(dcmList, outPath)
+    ensure_dir(fileparts(outPath));
+    V = dicom_series_to_volume(dcmList);
+    niftiwrite(single(V), outPath, 'Compressed', false);
+    info = niftiinfo(outPath);
+    V = single(niftiread(info));
+    assert(ndims(V) == 3, '结构像 DICOM 转 NIfTI 后应为 3D。');
+end
+
+function [V4d, info] = convert_dicom_to_nifti_4d(dcmList, outPath)
+    ensure_dir(fileparts(outPath));
+    V4d = dicom_series_to_4d(dcmList);
+    assert(ndims(V4d) == 4, 'DICOM 转换后功能像应为 4D。');
+    niftiwrite(single(V4d), outPath, 'Compressed', false);
+    info = niftiinfo(outPath);
+    V4d = single(niftiread(info));
 end
