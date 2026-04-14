@@ -67,7 +67,7 @@ function cfg = task_fmri_pipeline_config()
     cfg.firstLevel.hpf = 128;                  % sec
     cfg.firstLevel.addQuadraticMotion = true;
     cfg.firstLevel.addLinearTrend = true;
-    cfg.firstLevel.timingUnits = 'scans';      % 与 SPM "Units for design" 对齐: 'scans' 或 'secs'
+    cfg.firstLevel.timingUnits = 'scans';      % 与 SPM "Units for design" 对齐: 'scans'/'secs'/'seconds'
     cfg.firstLevel.scanOnsetIndexBase = 0;     % 仅 timingUnits='scans' 时生效：0(首体积=0) 或 1(首体积=1)
     cfg.firstLevel.microtimeResolution = 16;   % SPM fmri_t
     cfg.firstLevel.microtimeOnset = 8;         % SPM fmri_t0

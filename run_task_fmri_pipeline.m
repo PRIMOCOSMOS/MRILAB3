@@ -607,11 +607,11 @@ function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
     nMicro = T * P.microtimeResolution;
     tMicro = (0:nMicro-1)' * dt;
     h = canonical_hrf(dt, P.hrf);
-    % tMicro 的索引1对应时间0，因此 fmri_t0 直接映射为每TR内的采样索引（1-based）
+    % tMicro 的索引1对应时间0, 因此 fmri_t0 直接映射为每TR内的采样索引（1-based）
     sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
     badIdx = sampleIdx(sampleIdx < 1 | sampleIdx > nMicro);
     assert(isempty(badIdx), ...
-        'microtimeOnset 越界: fmri_t=%d, fmri_t0=%d, nMicro=%d, badSampleIdx=[%s]', ...
+        'microtimeOnset 越界: fmri_t=%d, fmri_t0=%d, nMicro=%d, badIdx=[%s]', ...
         P.microtimeResolution, P.microtimeOnset, nMicro, num2str(badIdx));
 
     Xtask = zeros(T, numel(names));
