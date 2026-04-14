@@ -252,15 +252,16 @@ function C = resolve_first_level_design(subjID, P)
     onsetsSec = cell(size(onsets));
     durationsSec = cell(size(durations));
     for i = 1:numel(names)
+        condName = char(string(names{i}));
         on = double(onsets{i}(:)');
         du = double(durations{i}(:)');
-        assert(~isempty(on), '条件 %s 的 onsets 不能为空。', string(names{i}));
-        assert(~isempty(du), '条件 %s 的 durations 不能为空。', string(names{i}));
+        assert(~isempty(on), '条件 %s 的 onsets 不能为空。', condName);
+        assert(~isempty(du), '条件 %s 的 durations 不能为空。', condName);
         if isscalar(du)
             du = repmat(du, size(on));
         end
         assert(numel(du) == numel(on), ...
-            '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', string(names{i}));
+            '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', condName);
 
         if strcmp(units, 'scans')
             on = on * P.TR;
