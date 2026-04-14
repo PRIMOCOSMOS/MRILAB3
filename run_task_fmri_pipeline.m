@@ -135,7 +135,7 @@ function run_group_dartel(preprocInfo, cfg)
 
     ensure_dir(cfg.paths.dartelDir);
     prev = pwd;
-    cleanupObj = onCleanup(@() cd(prev)); %#ok<NASGU>
+    dirCleanup = onCleanup(@() cd(prev)); %#ok<NASGU>
     cd(cfg.paths.dartelDir);
 
     matlabbatch = [];
@@ -287,7 +287,7 @@ function render_subject_results(info, cfg)
     xSPM.Ex = [];
     xSPM.n = 1;
 
-    [xSPM, SPMstruct] = spm_getSPM(xSPM); %#ok<NASGU>
+    [xSPM, spmStruct] = spm_getSPM(xSPM); %#ok<NASGU>
     hReg = spm_results_ui('Setup', xSPM);
     spm_list('List', xSPM, hReg);
 
@@ -534,7 +534,7 @@ function nii = convert_dicom_dir_to_nifti(dicomDir, outDir, singleOnly)
 
     hdr = spm_dicom_headers(char(dcm));
     prev = pwd;
-    cleanupObj = onCleanup(@() cd(prev)); %#ok<NASGU>
+    dirCleanup = onCleanup(@() cd(prev)); %#ok<NASGU>
     cd(outDir);
     spm_dicom_convert(hdr, 'all', 'flat', 'nii');
     niiFiles = cellstr(spm_select('FPList', outDir, '.*\.nii$'));
