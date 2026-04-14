@@ -46,11 +46,17 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
 end
 
 function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
+    % 从同一目录下多个 NIfTI 候选中选择最可能的功能像 run（优先多切片、再优先更多时间点）。
+    % 输入:
+    %   niiList - dir() 返回的 NIfTI 文件结构体数组。
+    % 输出:
+    %   Vbest   - 选中的 4D 功能像数据；若无可用候选则为空。
+    %   infoBest- 对应的 NIfTI 头信息；若无可用候选则为空。
     Vbest = [];
     infoBest = [];
     bestScore = -inf;
-    WEIGHT_MULTI_SLICE = 1e9;
-    WEIGHT_TIME_POINTS = 1e4;
+    WEIGHT_MULTI_SLICE = 1e9; % 远大于其他项：确保多切片优先级最高。
+    WEIGHT_TIME_POINTS = 1e4; % 次级权重：在同为多切片时优先时间点更多的数据。
     [~, ord] = sort({niiList.name});
     niiList = niiList(ord);
     for i = 1:numel(niiList)
