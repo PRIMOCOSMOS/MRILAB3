@@ -287,7 +287,7 @@ function render_subject_results(info, cfg)
     xSPM.Ex = [];
     xSPM.n = 1;
 
-    [xSPM, SPM] = spm_getSPM(xSPM); %#ok<ASGLU>
+    [xSPM, SPMstruct] = spm_getSPM(xSPM); %#ok<NASGU>
     hReg = spm_results_ui('Setup', xSPM);
     spm_list('List', xSPM, hReg);
 
@@ -451,7 +451,7 @@ function [rc1, rc2, flowField] = run_new_segment(coregAnat, cfg)
     [p, n, e] = fileparts(coregAnat);
     rc1 = fullfile(p, ['rc1' n e]);
     rc2 = fullfile(p, ['rc2' n e]);
-    flowField = fullfile(p, ['u_rc1' n e]);
+    flowField = fullfile(p, ['u_' n e]);
     assert(exist(rc1, 'file') == 2 && exist(rc2, 'file') == 2 && exist(flowField, 'file') == 2, ...
         '分割输出不完整，请检查 New Segment 结果。');
 end

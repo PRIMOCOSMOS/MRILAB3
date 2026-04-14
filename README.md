@@ -4,8 +4,8 @@
 
 本仓库已提供基于 **SPM12（DPABI任务态处理核心思路）** 的完整脚本：
 
-- `/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m`
-- `/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m`
+- `./run_task_fmri_pipeline.m`
+- `./task_fmri_pipeline_config.m`
 
 流程覆盖：
 
@@ -49,15 +49,15 @@ Onsets/
 ## 运行方法
 
 1. 打开 MATLAB，加入 SPM12 路径。
-2. 按需修改 `/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m` 参数（TR、切片顺序、对比等）。
+2. 按需修改 `./task_fmri_pipeline_config.m` 参数（TR、切片顺序、对比等）。
 3. 在 MATLAB 执行：
 
 ```matlab
-run('/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m')
+run_task_fmri_pipeline
 ```
 
 输出目录默认在：
 
-- `/home/runner/work/MRILAB3/MRILAB3/Derivatives/`
+- `./Derivatives/`
 
 其中每个被试会生成预处理结果、一级统计目录及结果图像（`orthview_activation.png`、`render_activation.png`）与阈值结果表（`xSPM_thresholded.mat`）。
