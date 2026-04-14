@@ -1,5 +1,5 @@
 function [runs, infos] = read_functional_runs(funcDir, outDir)
-    ensure_dir_local(outDir);
+    ensure_dir(outDir);
     runs = {};
     infos = {};
 
@@ -46,14 +46,14 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
     end
 end
 
-function ensure_dir_local(p)
+function ensure_dir(p)
     if ~isfolder(p)
         mkdir(p);
     end
 end
 
 function write_nifti_4d_local(vol4d, refInfo, pathOut)
-    ensure_dir_local(fileparts(pathOut));
+    ensure_dir(fileparts(pathOut));
     info = sanitize_nifti_info_for_write_local(refInfo);
     info.ImageSize = size(vol4d);
     info.Datatype = 'single';

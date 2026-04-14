@@ -37,8 +37,8 @@ function V4d = dicom_series_to_4d(dcmList)
 
     [nZ, usedFallback] = infer_n_slices(slicePos, hdr{1});
     if usedFallback && nFiles > 1
-        error(['无法从 DICOM 头稳定推断切片数（未检测到可靠的切片位置/头字段）。', ...
-               '请检查该序列是否缺失关键标签（如 ImagePositionPatient/NumberOfSlices）。']);
+        error(['无法从 DICOM 头稳定推断切片数（文件数=%d，未检测到可靠的切片位置/头字段）。', ...
+               '请检查该序列是否缺失关键标签（如 ImagePositionPatient/NumberOfSlices）。'], nFiles);
     end
     assert(mod(nFiles, nZ) == 0, ...
         '无法从 DICOM 序列稳定推断 4D 结构：文件数(%d)不能被每时相切片数(%d)整除。', nFiles, nZ);
@@ -111,7 +111,7 @@ function sec = parse_dicom_hhmmss(v)
         return;
     end
     s = char(string(v));
-    s = regexprep(s, '[^\d\.]', '');
+    s = regexprep(s, '[^\d.]', '');
     if isempty(s)
         return;
     end
@@ -167,6 +167,7 @@ function [nZ, usedFallback] = infer_n_slices(slicePos, firstHdr)
     valid = ~isnan(slicePos);
     if any(valid)
         sp = slicePos(valid);
+        % Round to 0.001 to suppress tiny floating-point jitter in DICOM positions.
         sp = round(sp * 1e3) / 1e3;
         u = unique(sp);
         if numel(u) > 1
