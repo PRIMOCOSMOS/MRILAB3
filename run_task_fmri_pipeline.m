@@ -178,7 +178,7 @@ function glm = first_level_glm(subj, cfg)
     assert(exist(condPath, 'file') == 2, '缺少条件文件: %s', condPath);
     C = load(condPath);
     assert(isfield(C, 'names') && isfield(C, 'onsets') && isfield(C, 'durations'), ...
-        'conditions.mat 必须包含 names/onsets/durations');
+        'conditions.mat must contain names/onsets/durations.');
 
     Y4d = subj.funcSmooth;
     T = size(Y4d, 4);
@@ -401,10 +401,10 @@ function seg = segment_t1(anat, P)
     x = anatCorr(:);
     x = x(isfinite(x));
     [idx, c] = kmeans(x, 3, 'Replicates', 5, 'MaxIter', 200);
-    [~, order] = sort(c, 'ascend');
+    [~, clustersByIntensity] = sort(c, 'ascend');
     mu = zeros(3,1); sd = zeros(3,1);
     for k = 1:3
-        v = x(idx==order(k));
+        v = x(idx==clustersByIntensity(k));
         mu(k) = mean(v); sd(k) = std(v) + 1e-4;
     end
 
@@ -493,7 +493,7 @@ function [Yw, Xw] = ar1_prewhiten(Y, X, rho)
 end
 
 function mask = threshold_tmap(tmap, dof, pVoxel, kExtent)
-    tThr = tinv(1 - pVoxel, dof);
+    tThr = tinv(1 - pVoxel / 2, dof);
     mask = abs(tmap) > tThr;
     CC = bwconncomp(mask, 26);
     keep = false(size(mask));
@@ -564,7 +564,7 @@ function show_3d_surfaces(anat, tmap, mask)
 end
 
 function A6 = affine_to_6dof(A)
-    tx = A(4,1); ty = A(4,2); tz = A(4,3);
+    tx = A(1,4); ty = A(2,4); tz = A(3,4);
     R = A(1:3,1:3);
     ry = asin(-R(3,1));
     rx = atan2(R(3,2), R(3,3));
@@ -580,8 +580,9 @@ function X = zscore_cols(X)
 end
 
 function sigma = fwhm_to_sigma(fwhmMM, voxMM)
-    % FWHM = 2*sqrt(2*ln(2))*sigma ≈ 2.3548*sigma
-    sigma = (fwhmMM ./ max(voxMM, eps)) / 2.3548;
+    % FWHM = 2*sqrt(2*ln(2))*sigma
+    FWHM_TO_SIGMA_FACTOR = 2 * sqrt(2 * log(2));
+    sigma = (fwhmMM ./ max(voxMM, eps)) / FWHM_TO_SIGMA_FACTOR;
 end
 
 function p = locate_first_existing(baseDir, names)
