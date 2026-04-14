@@ -54,9 +54,7 @@ function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
     %   infoBest- 对应的 NIfTI 头信息；若无可用候选则为空。
     Vbest = [];
     infoBest = [];
-    bestScore = -inf;
-    WEIGHT_MULTI_SLICE = 1e9; % 远大于其他项：确保多切片优先级最高。
-    WEIGHT_TIME_POINTS = 1e4; % 次级权重：在同为多切片时优先时间点更多的数据。
+    bestKey = [-1, -1, -1]; % [isMultiSlice, nTimePoints, nSlices]
     [~, ord] = sort({niiList.name});
     niiList = niiList(ord);
     for i = 1:numel(niiList)
@@ -73,15 +71,19 @@ function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
         % 评分优先级：先强偏好真实多切片数据，再按时间点数，最后按切片数细分。
         nSlices = size(V, 3);
         nTimePoints = size(V, 4);
-        score = double(nSlices > 1) * WEIGHT_MULTI_SLICE ...
-              + double(nTimePoints) * WEIGHT_TIME_POINTS ...
-              + double(nSlices);
-        if score > bestScore
+        key = [nSlices > 1, nTimePoints, nSlices];
+        if is_key_better_local(key, bestKey)
             Vbest = V;
             infoBest = info;
-            bestScore = score;
+            bestKey = key;
         end
     end
+end
+
+function tf = is_key_better_local(key, bestKey)
+    tf = key(1) > bestKey(1) || ...
+        (key(1) == bestKey(1) && key(2) > bestKey(2)) || ...
+        (key(1) == bestKey(1) && key(2) == bestKey(2) && key(3) > bestKey(3));
 end
 
 function ensure_dir(p)
