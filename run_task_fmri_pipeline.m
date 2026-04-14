@@ -244,10 +244,10 @@ function C = resolve_first_level_design(subjID, P)
 
     units = 'secs';
     if isfield(P, 'timingUnits') && ~isempty(P.timingUnits)
-        units = lower(string(P.timingUnits));
+        units = lower(char(P.timingUnits));
     end
-    assert(any(units == ["secs","seconds","scans"]), ...
-        'timingUnits 必须为 ''secs'' 或 ''scans''。');
+    assert(any(strcmp(units, {'secs','seconds','scans'})), ...
+        'timingUnits 必须为 ''secs''、''seconds'' 或 ''scans''。');
 
     onsetsSec = cell(size(onsets));
     durationsSec = cell(size(durations));
@@ -262,7 +262,7 @@ function C = resolve_first_level_design(subjID, P)
         assert(numel(du) == numel(on), ...
             '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', string(names{i}));
 
-        if units == "scans"
+        if strcmp(units, 'scans')
             on = on * P.TR;
             du = du * P.TR;
         end
@@ -517,7 +517,8 @@ function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
     tMicro = (0:nMicro-1)' * dt;
     h = canonical_hrf(dt, P.hrf);
     sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
-    sampleIdx = min(max(sampleIdx, 1), nMicro);
+    assert(all(sampleIdx >= 1 & sampleIdx <= nMicro), ...
+        'microtimeOnset 产生了越界采样点，请检查 microtimeResolution/microtimeOnset。');
 
     Xtask = zeros(T, numel(names));
     for i = 1:numel(names)
