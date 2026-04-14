@@ -367,7 +367,8 @@ function shiftsSec = resolve_slice_timing_shifts(P, nz)
             refMs = double(P.refTimingMs);
         else
             refIdx = P.refSlice;
-            assert(refIdx >= 1 && refIdx <= nz, 'refSlice 越界。');
+            assert(refIdx >= 1 && refIdx <= nz, ...
+                'refSlice 越界：%d (有效范围 1-%d)。', refIdx, nz);
             refMs = stMs(refIdx);
         end
         shiftsSec = (stMs - refMs) / 1000;
@@ -378,8 +379,12 @@ function shiftsSec = resolve_slice_timing_shifts(P, nz)
         'sliceTimingMode=order 时必须提供 sliceOrder。');
     so = double(P.sliceOrder(:)');
     assert(numel(so) == nz, 'sliceOrder 长度(%d)必须等于切片数(%d)。', numel(so), nz);
-    assert(isempty(setxor(1:nz, unique(so))), ...
-        'sliceOrder 必须包含 1..nslices 的每个切片且不重复。');
+    counts = histcounts(so, 0.5:1:(nz+0.5));
+    missingSlices = find(counts == 0);
+    duplicateSlices = find(counts > 1);
+    assert(isempty(missingSlices) && isempty(duplicateSlices), ...
+        'sliceOrder 非法。缺失切片: [%s]；重复切片: [%s]。', ...
+        num2str(missingSlices), num2str(duplicateSlices));
     assert(isfield(P, 'refSlice') && ~isempty(P.refSlice), ...
         'sliceTimingMode=order 时必须提供 refSlice。');
     refOrd = find(so == P.refSlice, 1, 'first');

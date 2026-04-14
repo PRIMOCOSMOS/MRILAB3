@@ -34,6 +34,7 @@ function cfg = task_fmri_pipeline_config()
     cfg.preproc.refTimingMs = [];      % 留空则自动使用 sliceTimingMs(refSlice)
 
     % timing_ms 示例（36 层）
+    % 说明：重复毫秒值表示这些切片在同一时刻采集（常见于多带采集）
     % cfg.preproc.sliceTimingMode = 'timing_ms';
     % cfg.preproc.sliceTimingMs = [ ...
     %     0 1430 880 330 1760 1210 660 110 1540 990 440 1870 1320 770 220 ...

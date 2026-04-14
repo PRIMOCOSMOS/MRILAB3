@@ -71,7 +71,7 @@ function tf = is_usable_text(t)
 end
 
 function [ok, textOut] = extract_with_pdftotext(pdfPath)
-    cmd = sprintf('pdftotext -enc UTF-8 -layout "%s" -', pdfPath);
+    cmd = sprintf('pdftotext -enc UTF-8 -layout %s -', shell_quote_arg(pdfPath));
     [status, out] = system(cmd);
     ok = (status == 0);
     textOut = out;
@@ -80,10 +80,10 @@ end
 function [ok, textOut] = extract_with_pypdf(pdfPath)
     py = [ ...
         "import pypdf,sys;" ...
-        + "r=pypdf.PdfReader(r'" + string(pdfPath) + "');" ...
+        + "r=pypdf.PdfReader(sys.argv[1]);" ...
         + "sys.stdout.write('\\n'.join([(p.extract_text() or '') for p in r.pages]))" ...
     ];
-    cmd = sprintf('python -c "%s"', escape_double_quotes(py));
+    cmd = sprintf('python -c "%s" %s', escape_double_quotes(py), shell_quote_arg(pdfPath));
     [status, out] = system(cmd);
     ok = (status == 0);
     textOut = out;
@@ -91,4 +91,13 @@ end
 
 function s = escape_double_quotes(s)
     s = strrep(char(s), '"', '\"');
+end
+
+function q = shell_quote_arg(arg)
+    a = char(arg);
+    if ispc
+        q = ['"' strrep(a, '"', '""') '"'];
+    else
+        q = ['''' strrep(a, '''', '''"''"''') ''''];
+    end
 end
