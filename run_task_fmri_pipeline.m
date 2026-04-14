@@ -56,8 +56,7 @@ end
 function out = preprocess_subject(subjID, cfg)
     fprintf('[%s] preprocess...\n', subjID);
 
-    hasSplitDataLayout = isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir);
-    if hasSplitDataLayout
+    if isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir)
         anatDir = resolve_subject_input_dir(cfg.paths.t1RawDir, subjID);
         funcDir = resolve_subject_input_dir(cfg.paths.funcRawDir, subjID);
     else
@@ -827,8 +826,12 @@ function p = resolve_subject_input_dir(rootDir, subjID)
         return;
     end
     filesNii = dir(fullfile(rootDir, '*.nii*'));
+    if ~isempty(filesNii)
+        p = rootDir;
+        return;
+    end
     filesDcm = dir(fullfile(rootDir, '**', '*.dcm'));
-    if ~isempty(filesNii) || ~isempty(filesDcm)
+    if ~isempty(filesDcm)
         p = rootDir;
     end
 end
