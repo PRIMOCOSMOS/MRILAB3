@@ -527,8 +527,10 @@ function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
     h = canonical_hrf(dt, P.hrf);
     % tMicro 的索引1对应时间0，因此 fmri_t0 直接映射为每TR内的采样索引（1-based）
     sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
-    assert(all(sampleIdx >= 1 & sampleIdx <= nMicro), ...
-        'microtimeOnset 产生了越界采样点，请检查 microtimeResolution/microtimeOnset。');
+    badIdx = sampleIdx(sampleIdx < 1 | sampleIdx > nMicro);
+    assert(isempty(badIdx), ...
+        'microtimeOnset 越界: fmri_t=%d, fmri_t0=%d, nMicro=%d, badSampleIdx=[%s]', ...
+        P.microtimeResolution, P.microtimeOnset, nMicro, num2str(badIdx));
 
     Xtask = zeros(T, numel(names));
     for i = 1:numel(names)

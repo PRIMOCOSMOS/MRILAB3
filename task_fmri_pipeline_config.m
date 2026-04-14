@@ -65,7 +65,7 @@ function cfg = task_fmri_pipeline_config()
     cfg.firstLevel.microtimeOnset = 8;         % SPM fmri_t0
 
     % 设计矩阵条件：全部在代码中定义（不依赖外部 conditions.mat）
-    % 下述默认值参考你截图中的设置：1个条件 righthand，5个 onset，duration=15
+    % 下述为示例默认值：1个条件 righthand，5个 onset，duration=15
     cfg.firstLevel.design.names = {'righthand'};
     cfg.firstLevel.design.onsets = {[0 30 60 90 120]};   % 若 timingUnits='scans'，按 scanOnsetIndexBase 解释
     cfg.firstLevel.design.durations = {15};              % 标量表示该条件所有 trial 共享同一时长
