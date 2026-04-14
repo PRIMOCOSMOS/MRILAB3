@@ -67,7 +67,7 @@ function out = preprocess_subject(subjID, cfg)
     end
     subjDer = fullfile(cfg.paths.derivativeDir, subjID);
     ensure_dir(subjDer);
-    assert(~isempty(anatDir) && ~isempty(funcDir), '被试 %s 的原始结构像或功能像目录不完整。', subjID);
+    assert(~isempty(anatDir) && ~isempty(funcDir), '%s', sprintf('被试 %s 的原始结构像或功能像目录不完整。', subjID));
 
     % --- 读取并保存结构像 ---
     [anatVol, anatInfo] = read_single_volume(anatDir, fullfile(subjDer, 'anat'));
@@ -796,11 +796,11 @@ function p = locate_first_existing(baseDir, names)
     end
 end
 
-% LIST_SUBDIRS Return visible subdirectory names under baseDir.
-% Input:
-%   baseDir - parent directory path.
-% Output:
-%   names   - cell array of non-hidden subdirectory names.
+% 列出 baseDir 下所有非隐藏子目录名称。
+% 输入：
+%   baseDir - 父目录路径。
+% 输出：
+%   names   - 非隐藏子目录名称 cell 数组。
 function names = list_subdirs(baseDir)
     names = {};
     if ~isfolder(baseDir)
@@ -812,13 +812,13 @@ function names = list_subdirs(baseDir)
     names = names(~startsWith(names, '.'));
 end
 
-% RESOLVE_SUBJECT_INPUT_DIR Resolve subject input directory under rootDir.
-% Input:
-%   rootDir - modality root (e.g., FunRaw or T1Raw).
-%   subjID  - subject folder name.
-% Output:
-%   p       - resolved directory path; if rootDir/subjID exists, use it;
-%             otherwise fall back to rootDir when data files are directly there.
+% 在指定模态根目录下解析被试输入目录。
+% 输入：
+%   rootDir - 模态根目录（例如 FunRaw 或 T1Raw）。
+%   subjID  - 被试目录名。
+% 输出：
+%   p       - 解析后的目录路径；优先 rootDir/subjID；
+%             若不存在且 rootDir 下直接有数据文件，则回退为 rootDir。
 function p = resolve_subject_input_dir(rootDir, subjID)
     p = '';
     candidateSubj = fullfile(rootDir, subjID);
