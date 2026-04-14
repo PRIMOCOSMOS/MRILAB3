@@ -11,8 +11,8 @@ function run_task_fmri_pipeline()
     cfg = task_fmri_pipeline_config();
     ensure_dir(cfg.paths.derivativeDir);
 
-    subjects = discover_subjects(cfg.paths.dataRawDir);
-    assert(~isempty(subjects), '未发现被试目录: %s', cfg.paths.dataRawDir);
+    subjects = discover_subjects(cfg.paths);
+    assert(~isempty(subjects), '未发现被试目录（已检查 FunRaw/T1Raw 与 DataRaw 回退路径）。');
 
     fprintf('\n=== [1/4] 预处理与配准 ===\n');
     subjData = struct([]);
@@ -40,25 +40,33 @@ function run_task_fmri_pipeline()
 end
 
 % ================================ 被试发现 ================================
-function subjects = discover_subjects(dataRawDir)
-    d = dir(dataRawDir);
-    d = d([d.isdir]);
-    names = {d.name};
-    names = names(~startsWith(names, '.'));
-    subjects = sort(names);
+function subjects = discover_subjects(paths)
+    if isfolder(paths.funcRawDir) && isfolder(paths.t1RawDir)
+        funSubs = list_subdirs(paths.funcRawDir);
+        t1Subs = list_subdirs(paths.t1RawDir);
+        if ~isempty(funSubs) && ~isempty(t1Subs)
+            subjects = sort(intersect(funSubs, t1Subs));
+            return;
+        end
+    end
+    subjects = sort(list_subdirs(paths.dataRawDir));
 end
 
 % ============================ 单被试预处理块 ==============================
 function out = preprocess_subject(subjID, cfg)
     fprintf('[%s] preprocess...\n', subjID);
 
-    subjRaw = fullfile(cfg.paths.dataRawDir, subjID);
+    if isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir)
+        anatDir = resolve_subject_input_dir(cfg.paths.t1RawDir, subjID);
+        funcDir = resolve_subject_input_dir(cfg.paths.funcRawDir, subjID);
+    else
+        subjRaw = fullfile(cfg.paths.dataRawDir, subjID);
+        anatDir = locate_first_existing(subjRaw, cfg.paths.anatDirCandidates);
+        funcDir = locate_first_existing(subjRaw, cfg.paths.funcDirCandidates);
+    end
     subjDer = fullfile(cfg.paths.derivativeDir, subjID);
     ensure_dir(subjDer);
-
-    anatDir = locate_first_existing(subjRaw, cfg.paths.anatDirCandidates);
-    funcDir = locate_first_existing(subjRaw, cfg.paths.funcDirCandidates);
-    assert(~isempty(anatDir) && ~isempty(funcDir), '被试 %s 的 anat/func 目录不完整。', subjID);
+    assert(~isempty(anatDir) && ~isempty(funcDir), '被试 %s 的原始结构像或功能像目录不完整。', subjID);
 
     % --- 读取并保存结构像 ---
     [anatVol, anatInfo] = read_single_volume(anatDir, fullfile(subjDer, 'anat'));
@@ -784,6 +792,47 @@ function p = locate_first_existing(baseDir, names)
             p = c;
             return;
         end
+    end
+end
+
+% 列出 baseDir 下所有非隐藏子目录名称。
+% 输入：
+%   baseDir - 父目录路径。
+% 输出：
+%   names   - 非隐藏子目录名称 cell 数组。
+function names = list_subdirs(baseDir)
+    names = {};
+    if ~isfolder(baseDir)
+        return;
+    end
+    d = dir(baseDir);
+    d = d([d.isdir]);
+    names = {d.name};
+    names = names(~startsWith(names, '.'));
+end
+
+% 在指定模态根目录下解析被试输入目录。
+% 输入：
+%   rootDir - 模态根目录（例如 FunRaw 或 T1Raw）。
+%   subjID  - 被试目录名。
+% 输出：
+%   p       - 解析后的目录路径；优先 rootDir/subjID；
+%             若不存在且 rootDir 下直接有数据文件，则回退为 rootDir。
+function p = resolve_subject_input_dir(rootDir, subjID)
+    p = '';
+    candidateSubj = fullfile(rootDir, subjID);
+    if isfolder(candidateSubj)
+        p = candidateSubj;
+        return;
+    end
+    filesNii = dir(fullfile(rootDir, '*.nii*'));
+    if ~isempty(filesNii)
+        p = rootDir;
+        return;
+    end
+    filesDcm = dir(fullfile(rootDir, '**', '*.dcm'));
+    if ~isempty(filesDcm)
+        p = rootDir;
     end
 end
 
