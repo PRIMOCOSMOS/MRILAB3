@@ -895,6 +895,7 @@ function safe_niftiwrite(vol, pathOut, info)
     infoTry = info;
     % Keep at least a few retries even for tiny headers, and allow a small buffer
     % beyond current field count for version-specific parser behavior.
+    % 4: enough attempts for very small headers; +2: tolerate parser-side extra checks.
     minStripAttempts = 4;
     extraStripAttempts = 2;
     maxStripAttempts = max(minStripAttempts, numel(fieldnames(infoTry)) + extraStripAttempts);
@@ -918,7 +919,7 @@ end
 
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
-    % Match localized messages (CN/EN); quoteClass includes: " , “ , ” and '.
+    % Match localized messages (CN/EN); quoteClass includes: ", “, ”, and '.
     quoteClass = '"“”''';
     cnUnknownFieldPattern = ['无法识别的字段名称[:：\s]*[', quoteClass, ']?([^', quoteClass, '\s]+)'];
     t = regexp(msg, cnUnknownFieldPattern, 'tokens', 'once');
@@ -933,7 +934,7 @@ function fieldName = extract_unknown_info_field(msg)
     end
 end
 
-function [V, info] = dicom_series_to_volume(dcmList)
+function V = dicom_series_to_volume(dcmList)
     files = fullfile({dcmList.folder}, {dcmList.name});
     z = zeros(numel(files), 1);
     for i = 1:numel(files)
@@ -945,10 +946,9 @@ function [V, info] = dicom_series_to_volume(dcmList)
     s = dicomread(files{1});
     V = zeros([size(s), numel(files)], 'single');
     for i = 1:numel(files), V(:,:,i) = single(dicomread(files{i})); end
-    info = struct();
 end
 
-function [V4d, info] = dicom_series_to_4d(dcmList)
+function V4d = dicom_series_to_4d(dcmList)
     assert(~isempty(dcmList), 'DICOM 列表为空。');
     files = fullfile({dcmList.folder}, {dcmList.name});
     hdr = cell(numel(files), 1);
@@ -977,23 +977,20 @@ function [V4d, info] = dicom_series_to_4d(dcmList)
             V4d(:,:,z,t) = single(dicomread(files{idx(z)}));
         end
     end
-    info = struct();
 end
 
 function [V, info] = convert_dicom_to_nifti_3d(dcmList, outPath)
     ensure_dir(fileparts(outPath));
-    [V, ~] = dicom_series_to_volume(dcmList);
+    V = dicom_series_to_volume(dcmList);
     niftiwrite(single(V), outPath, 'Compressed', false);
     info = niftiinfo(outPath);
     V = single(niftiread(info));
-    if ndims(V) == 4
-        V = V(:, :, :, 1);
-    end
+    assert(ndims(V) == 3, '结构像 DICOM 转 NIfTI 后应为 3D。');
 end
 
 function [V4d, info] = convert_dicom_to_nifti_4d(dcmList, outPath)
     ensure_dir(fileparts(outPath));
-    [V4d, ~] = dicom_series_to_4d(dcmList);
+    V4d = dicom_series_to_4d(dcmList);
     assert(ndims(V4d) == 4, 'DICOM 转换后功能像应为 4D。');
     niftiwrite(single(V4d), outPath, 'Compressed', false);
     info = niftiinfo(outPath);
