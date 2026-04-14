@@ -13,6 +13,7 @@
 
 - `./run_task_fmri_pipeline.m`
 - `./task_fmri_pipeline_config.m`
+- `./read_ctex_pdf_text.m`
 
 ---
 
@@ -74,6 +75,13 @@ run_task_fmri_pipeline
 ./task_fmri_pipeline_config.m
 ```
 
+中文 ctex PDF（如 `MRILAB3.pdf`）建议先提取文本再对照实现：
+
+```matlab
+out = read_ctex_pdf_text('./MRILAB3.pdf', './MRILAB3_extracted.txt');
+disp(out.method)
+```
+
 输出目录：
 
 ```text
@@ -98,3 +106,22 @@ run_task_fmri_pipeline
 - 本实现强调“**可学习、可追踪、可独立复现**”；
 - 复杂步骤（例如 DARTEL/GRF）在此以独立可读的 MATLAB 近似实现替代；
 - 若你希望下一步进一步逼近你课件中的每个数学细节（例如更严格 ReML/GRF/FWE），可以在当前脚本上继续逐块替换实现。
+
+---
+
+## Slice Timing：支持逐层毫秒输入（timing_ms）
+
+在 `task_fmri_pipeline_config.m` 中可切换：
+
+```matlab
+cfg.preproc.sliceTimingMode = 'timing_ms';
+cfg.preproc.sliceTimingMs = [ ...
+    0 1430 880 330 1760 1210 660 110 1540 990 440 1870 1320 770 220 ...
+    1650 1100 550 0 1430 880 330 1760 1210 660 110 1540 990 440 1870 ...
+    1320 770 220 1650 1100 550];
+```
+
+说明：
+- `sliceTimingMs` 长度需等于 `nslices`
+- 如不设置 `refTimingMs`，默认使用 `sliceTimingMs(refSlice)` 作为参考层时间
+- `timing_ms` 模式可兼容同一时间采集多个切片（如多带）

@@ -26,6 +26,20 @@ function cfg = task_fmri_pipeline_config()
     assert(numel(cfg.preproc.sliceOrder) == cfg.preproc.nslices, ...
         'sliceOrder 长度必须与 nslices 一致。');
 
+    % Slice Timing 输入模式：
+    % 1) 'order'     : 使用 sliceOrder + refSlice（传统方式）
+    % 2) 'timing_ms' : 使用每层采集时间（毫秒），可兼容多带/同时间采集切片
+    cfg.preproc.sliceTimingMode = 'order';
+    cfg.preproc.sliceTimingMs = [];    % 长度需等于 nslices
+    cfg.preproc.refTimingMs = [];      % 留空则自动使用 sliceTimingMs(refSlice)
+
+    % timing_ms 示例（36 层）
+    % cfg.preproc.sliceTimingMode = 'timing_ms';
+    % cfg.preproc.sliceTimingMs = [ ...
+    %     0 1430 880 330 1760 1210 660 110 1540 990 440 1870 1320 770 220 ...
+    %     1650 1100 550 0 1430 880 330 1760 1210 660 110 1540 990 440 1870 ...
+    %     1320 770 220 1650 1100 550];
+
     % Realign/Coreg 参数
     cfg.preproc.realignPyramidLevels = 3;
     cfg.preproc.coregPyramidLevels = 3;

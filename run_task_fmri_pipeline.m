@@ -334,13 +334,9 @@ end
 
 function Vout = slice_timing_correction(Vin, P)
     nx = size(Vin,1); ny = size(Vin,2); nz = size(Vin,3); nt = size(Vin,4);
+    assert(nz == P.nslices, '功能像切片数(%d)与配置 nslices(%d)不一致。', nz, P.nslices);
     t = (0:nt-1) * P.TR;
-    dt = P.TR / P.nslices;
-    shifts = zeros(1, nz);
-    for z = 1:nz
-        ord = find(P.sliceOrder == z, 1, 'first');
-        shifts(z) = (ord - find(P.sliceOrder == P.refSlice, 1, 'first')) * dt;
-    end
+    shifts = resolve_slice_timing_shifts(P, nz);
 
     Vout = zeros(size(Vin), 'single');
     for z = 1:nz
@@ -352,6 +348,46 @@ function Vout = slice_timing_correction(Vin, P)
                 Vout(x, y, z, :) = interp1(t, s, tq, 'pchip', 'extrap');
             end
         end
+    end
+end
+
+function shiftsSec = resolve_slice_timing_shifts(P, nz)
+    mode = 'order';
+    if isfield(P, 'sliceTimingMode') && ~isempty(P.sliceTimingMode)
+        mode = lower(string(P.sliceTimingMode));
+    end
+
+    if (mode == "timing_ms") || (isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs))
+        assert(isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs), ...
+            'sliceTimingMode=timing_ms 时必须提供 sliceTimingMs。');
+        stMs = double(P.sliceTimingMs(:)');
+        assert(numel(stMs) == nz, 'sliceTimingMs 长度(%d)必须等于切片数(%d)。', numel(stMs), nz);
+
+        if isfield(P, 'refTimingMs') && ~isempty(P.refTimingMs)
+            refMs = double(P.refTimingMs);
+        else
+            refIdx = P.refSlice;
+            assert(refIdx >= 1 && refIdx <= nz, 'refSlice 越界。');
+            refMs = stMs(refIdx);
+        end
+        shiftsSec = (stMs - refMs) / 1000;
+        return;
+    end
+
+    assert(isfield(P, 'sliceOrder') && ~isempty(P.sliceOrder), ...
+        'sliceTimingMode=order 时必须提供 sliceOrder。');
+    so = double(P.sliceOrder(:)');
+    assert(numel(so) == nz, 'sliceOrder 长度(%d)必须等于切片数(%d)。', numel(so), nz);
+    assert(isempty(setxor(1:nz, unique(so))), ...
+        'sliceOrder 必须包含 1..nslices 的每个切片且不重复。');
+    assert(isfield(P, 'refSlice') && ~isempty(P.refSlice), ...
+        'sliceTimingMode=order 时必须提供 refSlice。');
+    refOrd = find(so == P.refSlice, 1, 'first');
+    dt = P.TR / nz;
+    shiftsSec = zeros(1, nz);
+    for z = 1:nz
+        ord = find(so == z, 1, 'first');
+        shiftsSec(z) = (ord - refOrd) * dt;
     end
 end
 
