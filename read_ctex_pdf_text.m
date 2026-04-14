@@ -90,7 +90,12 @@ function [ok, textOut] = extract_with_pypdf(pdfPath)
 end
 
 function s = escape_double_quotes(s)
-    s = strrep(char(s), '"', '\"');
+    s = char(s);
+    if ispc
+        s = strrep(s, '"', '""');
+    else
+        s = strrep(s, '"', '\"');
+    end
 end
 
 function q = shell_quote_arg(arg)

@@ -352,7 +352,7 @@ function Vout = slice_timing_correction(Vin, P)
 end
 
 function shiftsSec = resolve_slice_timing_shifts(P, nz)
-    mode = 'order';
+    mode = 'order'; % 回退默认：当配置未显式提供 sliceTimingMode 时使用传统顺序模式
     if isfield(P, 'sliceTimingMode') && ~isempty(P.sliceTimingMode)
         mode = lower(string(P.sliceTimingMode));
     end
