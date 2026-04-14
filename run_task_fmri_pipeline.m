@@ -876,8 +876,9 @@ function infoOut = sanitize_nifti_info_for_write(infoIn)
 end
 
 function safe_niftiwrite(vol, pathOut, info)
+    maxStripAttempts = 12;
     infoTry = info;
-    for k = 1:12
+    for k = 1:maxStripAttempts
         try
             niftiwrite(vol, pathOut, infoTry, 'Compressed', false);
             return;
@@ -890,11 +891,14 @@ function safe_niftiwrite(vol, pathOut, info)
             break;
         end
     end
+    warning('niftiwrite:InfoFallback', ...
+        '写出 %s 时无法兼容参考头信息，已回退为无 Info 写出。', pathOut);
     niftiwrite(vol, pathOut, 'Compressed', false);
 end
 
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
+    % 同时兼容中英文报错与中英文引号格式。
     t = regexp(msg, '无法识别的字段名称\s*["“”]?([^"“”''\s]+)["“”]?', 'tokens', 'once');
     if ~isempty(t)
         fieldName = t{1};
