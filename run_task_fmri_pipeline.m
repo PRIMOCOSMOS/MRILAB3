@@ -433,54 +433,6 @@ function [V, info] = read_single_volume(inputDir, outDir)
     end
 end
 
-function [runs, infos] = read_functional_runs(funcDir, outDir)
-    ensure_dir(outDir);
-    runs = {};
-    infos = {};
-
-    niiTop = dir(fullfile(funcDir, '*.nii*'));
-    if ~isempty(niiTop)
-        p = fullfile(niiTop(1).folder, niiTop(1).name);
-        info = niftiinfo(p);
-        V = single(niftiread(info));
-        assert(ndims(V) == 4, '功能像 NIfTI 必须为 4D。');
-        runs{1} = V; infos{1} = info; %#ok<AGROW>
-        write_nifti_4d(V, info, fullfile(outDir, 'run01_raw.nii'));
-        return;
-    end
-
-    d = dir(funcDir);
-    d = d([d.isdir]);
-    d = d(~startsWith({d.name}, '.'));
-    if isempty(d)
-        dcmTop = dir(fullfile(funcDir, '**', '*.dcm'));
-        if ~isempty(dcmTop)
-            outPath = fullfile(outDir, 'run01_raw.nii');
-            [V, info] = convert_dicom_to_nifti_4d(dcmTop, outPath);
-            runs{1} = V; infos{1} = info; %#ok<AGROW>
-            return;
-        end
-    end
-    for i = 1:numel(d)
-        runDir = fullfile(funcDir, d(i).name);
-        nii = dir(fullfile(runDir, '*.nii*'));
-        if ~isempty(nii)
-            p = fullfile(nii(1).folder, nii(1).name);
-            info = niftiinfo(p);
-            V = single(niftiread(info));
-            assert(ndims(V) == 4, 'run %s 需为4D。', d(i).name);
-            write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
-        else
-            dcm = dir(fullfile(runDir, '**', '*.dcm'));
-            assert(~isempty(dcm), 'run %s 目录中无 NIfTI 或 DICOM。', d(i).name);
-            outPath = fullfile(outDir, sprintf('run%02d_raw.nii', i));
-            [V, info] = convert_dicom_to_nifti_4d(dcm, outPath);
-        end
-        runs{end + 1} = V; %#ok<AGROW>
-        infos{end + 1} = info; %#ok<AGROW>
-    end
-end
-
 function V = drop_initial_volumes(V, n)
     assert(size(V, 4) > n, '时间点不足以去除前 %d 个。', n);
     V = V(:, :, :, n+1:end);
@@ -948,37 +900,6 @@ function V = dicom_series_to_volume(dcmList)
     for i = 1:numel(files), V(:,:,i) = single(dicomread(files{i})); end
 end
 
-function V4d = dicom_series_to_4d(dcmList)
-    assert(~isempty(dcmList), 'DICOM 列表为空。');
-    files = fullfile({dcmList.folder}, {dcmList.name});
-    hdr = cell(numel(files), 1);
-    for i = 1:numel(files), hdr{i} = dicominfo(files{i}); end
-
-    inst = zeros(numel(files),1); time = zeros(numel(files),1);
-    for i = 1:numel(files)
-        h = hdr{i};
-        if isfield(h, 'InstanceNumber'), inst(i)=h.InstanceNumber; else, inst(i)=i; end
-        if isfield(h, 'TemporalPositionIdentifier'), time(i)=h.TemporalPositionIdentifier; else, time(i)=1; end
-    end
-
-    tVals = unique(time);
-    nT = numel(tVals);
-    idxT1 = find(time == tVals(1));
-    [~, ordZ] = sort(inst(idxT1));
-    nZ = numel(idxT1);
-    s = dicomread(files{idxT1(ordZ(1))});
-    V4d = zeros([size(s), nZ, nT], 'single');
-
-    for t = 1:nT
-        idx = find(time == tVals(t));
-        [~, o] = sort(inst(idx));
-        idx = idx(o);
-        for z = 1:nZ
-            V4d(:,:,z,t) = single(dicomread(files{idx(z)}));
-        end
-    end
-end
-
 function [V, info] = convert_dicom_to_nifti_3d(dcmList, outPath)
     ensure_dir(fileparts(outPath));
     V = dicom_series_to_volume(dcmList);
@@ -986,13 +907,4 @@ function [V, info] = convert_dicom_to_nifti_3d(dcmList, outPath)
     info = niftiinfo(outPath);
     V = single(niftiread(info));
     assert(ndims(V) == 3, '结构像 DICOM 转 NIfTI 后应为 3D。');
-end
-
-function [V4d, info] = convert_dicom_to_nifti_4d(dcmList, outPath)
-    ensure_dir(fileparts(outPath));
-    V4d = dicom_series_to_4d(dcmList);
-    assert(ndims(V4d) == 4, 'DICOM 转换后功能像应为 4D。');
-    niftiwrite(single(V4d), outPath, 'Compressed', false);
-    info = niftiinfo(outPath);
-    V4d = single(niftiread(info));
 end
