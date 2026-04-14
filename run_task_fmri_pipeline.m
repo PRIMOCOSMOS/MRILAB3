@@ -72,9 +72,9 @@ function out = preprocess_subject(subjID, cfg)
     motionRuns = cell(numel(funcRuns), 1);
     for r = 1:numel(funcRuns)
         run4d = single(funcRuns{r});
-        run4d = drop_initial_volumes(run4d, cfg.preproc.removeFirstN);
-        run4d = slice_timing_correction(run4d, cfg.preproc);
-        [run4d, motion] = realign_4d(run4d, cfg.preproc);
+        run4d = module_remove_first_timepoints(run4d, cfg.preproc);
+        run4d = module_slice_timing(run4d, cfg.preproc);
+        [run4d, motion] = module_realign(run4d, cfg.preproc);
         preprocRuns{r} = run4d;
         motionRuns{r} = motion;
     end
@@ -85,10 +85,10 @@ function out = preprocess_subject(subjID, cfg)
 
     % --- 结构像到功能均值配准 ---
     meanFunc = mean(all4d, 4, 'omitnan');
-    [anatCoreg, tformAF] = coregister_anat_to_func(anatVol, meanFunc, cfg.preproc);
+    [anatCoreg, tformAF] = module_coregister(anatVol, meanFunc, cfg.preproc);
 
     % --- 结构像分割（GM/WM/CSF） ---
-    seg = segment_t1(anatCoreg, cfg.preproc);
+    seg = module_segment(anatCoreg, cfg.preproc);
 
     % --- 写中间结果 ---
     write_nifti_like(anatCoreg, anatInfo, fullfile(subjDer, 'anat', 'anat_coreg.nii'));
@@ -109,6 +109,64 @@ function out = preprocess_subject(subjID, cfg)
     out.tformAF = tformAF;
 end
 
+function V = module_remove_first_timepoints(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'removeFirstTimePoints') ...
+            && isfield(P.pipeline.removeFirstTimePoints, 'enabled') ...
+            && P.pipeline.removeFirstTimePoints.enabled
+        V = drop_initial_volumes(V, P.pipeline.removeFirstTimePoints.nVolumes);
+    end
+end
+
+function V = module_slice_timing(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'sliceTiming') ...
+            && isfield(P.pipeline.sliceTiming, 'enabled') ...
+            && P.pipeline.sliceTiming.enabled
+        st = P.pipeline.sliceTiming;
+        st.TR = P.TR;
+        st.sliceTimingMode = st.mode;
+        st.sliceTimingMs = st.timingMs;
+        V = slice_timing_correction(V, st);
+    end
+end
+
+function [V, motion] = module_realign(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'realign') ...
+            && isfield(P.pipeline.realign, 'enabled') ...
+            && P.pipeline.realign.enabled
+        rp = P.pipeline.realign;
+        rp.realignPyramidLevels = rp.pyramidLevels;
+        [V, motion] = realign_4d(V, rp);
+    else
+        motion = zeros(size(V, 4), 6, 'single');
+    end
+end
+
+function [anatReg, tform] = module_coregister(anat, meanFunc, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'coregister') ...
+            && isfield(P.pipeline.coregister, 'enabled') ...
+            && P.pipeline.coregister.enabled
+        cp = P.pipeline.coregister;
+        cp.coregPyramidLevels = cp.pyramidLevels;
+        [anatReg, tform] = coregister_anat_to_func(anat, meanFunc, cp);
+    else
+        anatReg = anat;
+        tform = affine3d(eye(4));
+    end
+end
+
+function seg = module_segment(anat, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'segment') ...
+            && isfield(P.pipeline.segment, 'enabled') ...
+            && P.pipeline.segment.enabled
+        sp = P.pipeline.segment;
+        seg = segment_t1(anat, sp);
+    else
+        seg.csf = zeros(size(anat), 'single');
+        seg.gm = zeros(size(anat), 'single');
+        seg.wm = zeros(size(anat), 'single');
+    end
+end
+
 % ============================ 群体模板构建块 ==============================
 function tpl = build_group_template(subjData, cfg)
     fprintf('[group] building template...\n');
@@ -118,14 +176,23 @@ function tpl = build_group_template(subjData, cfg)
     allAnat = cat(4, subjData.anat);
     template = mean(allAnat, 4, 'omitnan');
 
+    if ~cfg.preproc.pipeline.normalize.enabled
+        tpl.volume = template;
+        tpl.info = subjData(1).anatInfo;
+        tpl.path = fullfile(cfg.paths.templateDir, 'group_template.nii');
+        write_nifti_like(template, tpl.info, tpl.path);
+        return;
+    end
+
     % 迭代：每轮将各受试者 anat 非线性配准到当前模板，再更新模板
-    for it = 1:cfg.normalization.templateIters
+    NP = cfg.preproc.pipeline.normalize;
+    for it = 1:NP.templateIters
         warpedAll = zeros([size(template), numel(subjData)], 'single');
         for i = 1:numel(subjData)
             moving = subjData(i).anat;
             [D, movingReg] = imregdemons(moving, template, ...
-                cfg.normalization.demonsIters, ...
-                'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
+                NP.demonsIters, ...
+                'AccumulatedFieldSmoothing', NP.demonsSmoothing);
             warpedAll(:, :, :, i) = movingReg;
             subjData(i).normField = D; %#ok<AGROW>
         end
@@ -142,22 +209,31 @@ end
 % ============================== 标准化和平滑 ==============================
 function out = normalize_subject_to_template(in, tpl, cfg)
     fprintf('[%s] normalize + smooth...\n', in.subjID);
-
-    [D, ~] = imregdemons(in.anat, tpl.volume, ...
-        cfg.normalization.demonsIters, ...
-        'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
-
+    NP = cfg.preproc.pipeline.normalize;
     V = size(in.func4d, 4);
-    funcNorm = zeros(size(in.func4d), 'single');
-    for t = 1:V
-        funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
-            'OutputView', imref3d(size(tpl.volume)));
+    D = [];
+    if NP.enabled
+        [D, ~] = imregdemons(in.anat, tpl.volume, ...
+            NP.demonsIters, ...
+            'AccumulatedFieldSmoothing', NP.demonsSmoothing);
+        funcNorm = zeros(size(in.func4d), 'single');
+        for t = 1:V
+            funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
+                'OutputView', imref3d(size(tpl.volume)));
+        end
+    else
+        funcNorm = in.func4d;
     end
 
-    sigma = fwhm_to_sigma(cfg.preproc.smoothFWHM, cfg.preproc.voxelSize);
-    funcSmooth = zeros(size(funcNorm), 'single');
-    for t = 1:V
-        funcSmooth(:, :, :, t) = imgaussfilt3(funcNorm(:, :, :, t), sigma);
+    SP = cfg.preproc.pipeline.smooth;
+    if SP.enabled
+        sigma = fwhm_to_sigma(SP.fwhm, SP.voxelSize);
+        funcSmooth = zeros(size(funcNorm), 'single');
+        for t = 1:V
+            funcSmooth(:, :, :, t) = imgaussfilt3(funcNorm(:, :, :, t), sigma);
+        end
+    else
+        funcSmooth = funcNorm;
     end
 
     out = in;
@@ -174,18 +250,14 @@ end
 function glm = first_level_glm(subj, cfg)
     fprintf('[%s] first-level GLM...\n', subj.subjID);
 
-    condPath = fullfile(cfg.paths.onsetDir, subj.subjID, cfg.firstLevel.conditionFileName);
-    assert(exist(condPath, 'file') == 2, '缺少条件文件: %s', condPath);
-    C = load(condPath);
-    assert(isfield(C, 'names') && isfield(C, 'onsets') && isfield(C, 'durations'), ...
-        'conditions.mat must contain names/onsets/durations.');
+    C = resolve_first_level_design(subj.subjID, cfg.firstLevel);
 
     Y4d = subj.funcSmooth;
     T = size(Y4d, 4);
     Y = reshape(Y4d, [], T)';         % T x V
 
     % --- 构建设计矩阵 ---
-    Xtask = build_task_regressors(C.names, C.onsets, C.durations, T, cfg.firstLevel);
+    Xtask = build_task_regressors(C.names, C.onsetsSec, C.durationsSec, T, cfg.firstLevel);
     Xnuis = build_nuisance_regressors(subj.motion, T, cfg.firstLevel);
     X = [Xtask, Xnuis];
     X = zscore_cols(X);
@@ -230,6 +302,64 @@ function glm = first_level_glm(subj, cfg)
     glm.tmap = tmap3;
     glm.mask = mask;
     glm.outDir = outDir;
+end
+
+function C = resolve_first_level_design(subjID, P)
+    assert(isfield(P, 'design') && ~isempty(P.design), 'firstLevel.design 未配置。');
+    D = P.design;
+    assert(isfield(D, 'names') && isfield(D, 'onsets') && isfield(D, 'durations'), ...
+        'firstLevel.design 需要包含 names/onsets/durations。');
+
+    names = D.names;
+    onsets = D.onsets;
+    durations = D.durations;
+    assert(iscell(names) && iscell(onsets) && iscell(durations), ...
+        'firstLevel.design 中 names/onsets/durations 必须为 cell。');
+    assert(numel(names) == numel(onsets) && numel(names) == numel(durations), ...
+        'firstLevel.design 条件数不一致。');
+
+    units = 'secs';
+    if isfield(P, 'timingUnits') && ~isempty(P.timingUnits)
+        units = lower(char(P.timingUnits));
+    end
+    assert(any(strcmp(units, {'secs','seconds','scans'})), ...
+        'timingUnits 必须为 ''secs''、''seconds'' 或 ''scans''。');
+
+    onsetsSec = cell(size(onsets));
+    durationsSec = cell(size(durations));
+    for i = 1:numel(names)
+        condName = char(names{i});
+        on = double(onsets{i}(:)');
+        du = double(durations{i}(:)');
+        assert(~isempty(on), '条件 %s 的 onsets 不能为空。', condName);
+        assert(~isempty(du), '条件 %s 的 durations 不能为空。', condName);
+        if isscalar(du)
+            du = repmat(du, size(on));
+        end
+        assert(numel(du) == numel(on), ...
+            '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', condName);
+
+        if strcmp(units, 'scans')
+            onsetBase = 0;
+            if isfield(P, 'scanOnsetIndexBase') && ~isempty(P.scanOnsetIndexBase)
+                onsetBase = double(P.scanOnsetIndexBase);
+            end
+            assert(any(onsetBase == [0 1]), ...
+                'scanOnsetIndexBase 必须为 0 或 1。');
+            assert(all(on >= onsetBase), ...
+                '存在小于 scanOnsetIndexBase 的 onset。');
+            on = (on - onsetBase) * P.TR;
+            du = du * P.TR;
+        end
+
+        onsetsSec{i} = on;
+        durationsSec{i} = du;
+    end
+
+    C.subjID = subjID;
+    C.names = names;
+    C.onsetsSec = onsetsSec;
+    C.durationsSec = durationsSec;
 end
 
 % ============================== 现代可视化块 ==============================
@@ -355,12 +485,18 @@ function shiftsSec = resolve_slice_timing_shifts(P, nz)
     mode = 'order'; % 回退默认：当配置未显式提供 sliceTimingMode 时使用传统顺序模式
     if isfield(P, 'sliceTimingMode') && ~isempty(P.sliceTimingMode)
         mode = lower(string(P.sliceTimingMode));
+    elseif isfield(P, 'mode') && ~isempty(P.mode)
+        mode = lower(string(P.mode));
     end
 
     if mode == "timing_ms"
-        assert(isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs), ...
-            'sliceTimingMode=timing_ms 时必须提供 sliceTimingMs。');
-        stMs = double(P.sliceTimingMs(:)');
+        if isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs)
+            stMs = double(P.sliceTimingMs(:)');
+        elseif isfield(P, 'timingMs') && ~isempty(P.timingMs)
+            stMs = double(P.timingMs(:)');
+        else
+            error('sliceTimingMode=timing_ms 时必须提供 sliceTimingMs/timingMs。');
+        end
         assert(numel(stMs) == nz, 'sliceTimingMs 长度(%d)必须等于切片数(%d)。', numel(stMs), nz);
 
         if isfield(P, 'refTimingMs') && ~isempty(P.refTimingMs)
@@ -461,20 +597,34 @@ function seg = segment_t1(anat, P)
     seg.wm = p3;
 end
 
-function Xtask = build_task_regressors(names, onsets, durations, T, P)
-    t = (0:T-1)' * P.TR;
-    h = canonical_hrf(P.TR, P.hrf);
+function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
+    assert(P.microtimeResolution >= 1 && mod(P.microtimeResolution, 1) == 0, ...
+        'microtimeResolution 必须为正整数。');
+    assert(P.microtimeOnset >= 1 && P.microtimeOnset <= P.microtimeResolution ...
+        && mod(P.microtimeOnset, 1) == 0, ...
+        'microtimeOnset 必须是 1..microtimeResolution 的整数。');
+    dt = P.TR / P.microtimeResolution;
+    nMicro = T * P.microtimeResolution;
+    tMicro = (0:nMicro-1)' * dt;
+    h = canonical_hrf(dt, P.hrf);
+    % tMicro 的索引1对应时间0, 因此 fmri_t0 直接映射为每TR内的采样索引（1-based）
+    sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
+    badIdx = sampleIdx(sampleIdx < 1 | sampleIdx > nMicro);
+    assert(isempty(badIdx), ...
+        'microtimeOnset 越界: fmri_t=%d, fmri_t0=%d, nMicro=%d, badIdx=[%s]', ...
+        P.microtimeResolution, P.microtimeOnset, nMicro, num2str(badIdx));
+
     Xtask = zeros(T, numel(names));
     for i = 1:numel(names)
-        u = zeros(T, 1);
-        on = onsets{i};
-        du = durations{i};
-        if isscalar(du), du = repmat(du, size(on)); end
+        uMicro = zeros(nMicro, 1);
+        on = onsetsSec{i};
+        du = durationsSec{i};
         for k = 1:numel(on)
-            u = u + double(t >= on(k) & t < (on(k) + du(k)));
+            uMicro = uMicro + double(tMicro >= on(k) & tMicro < (on(k) + du(k)));
         end
-        xc = conv(u, h);
-        Xtask(:, i) = xc(1:T);
+        xc = conv(uMicro, h);
+        xc = xc(1:nMicro);
+        Xtask(:, i) = xc(sampleIdx(:));
     end
 end
 
@@ -499,10 +649,10 @@ function Xn = build_nuisance_regressors(motion, T, P)
     end
 end
 
-function h = canonical_hrf(TR, H)
+function h = canonical_hrf(dt, H)
     % 双Gamma HRF:
     % p1/d1: 主峰 shape/scale; p2/d2: undershoot shape/scale; ratio: 相对幅值比
-    t = (0:TR:H.length)';
+    t = (0:dt:H.length)';
     g1 = gampdf(t, H.p1, H.d1);
     g2 = gampdf(t, H.p2, H.d2);
     h = g1 - g2 / H.ratio;

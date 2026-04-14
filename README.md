@@ -29,19 +29,7 @@ DataRaw/
       run2/ (可选) -> *.nii 或 DICOM
   Sub002/
     ...
-
-Onsets/
-  Sub001/
-    conditions.mat
-  Sub002/
-    conditions.mat
 ```
-
-`conditions.mat` 至少包含：
-
-- `names`：条件名 cell，例如 `{'ConditionA','ConditionB'}`
-- `onsets`：每个条件 onset（秒）cell
-- `durations`：每个条件持续时间（秒）cell
 
 ---
 
@@ -74,6 +62,25 @@ run_task_fmri_pipeline
 ```matlab
 ./task_fmri_pipeline_config.m
 ```
+
+一级模型（SPM 风格）关键参数已全部内置在配置中（不依赖外部条件文件）：
+
+- `cfg.firstLevel.timingUnits`（`'scans'` 或 `'secs'`）
+- `cfg.firstLevel.scanOnsetIndexBase`（仅 `timingUnits='scans'`：0-based 或 1-based）
+- `cfg.firstLevel.TR`
+- `cfg.firstLevel.microtimeResolution`（SPM `fmri_t`）
+- `cfg.firstLevel.microtimeOnset`（SPM `fmri_t0`）
+- `cfg.firstLevel.design.names/onsets/durations`
+
+DPABI 预处理步骤（白盒映射）也全部内置在配置中，并可逐项开关：
+
+- `cfg.preproc.pipeline.removeFirstTimePoints.enabled`
+- `cfg.preproc.pipeline.sliceTiming.enabled`
+- `cfg.preproc.pipeline.realign.enabled`
+- `cfg.preproc.pipeline.coregister.enabled`
+- `cfg.preproc.pipeline.segment.enabled`
+- `cfg.preproc.pipeline.normalize.enabled`
+- `cfg.preproc.pipeline.smooth.enabled`
 
 中文 ctex PDF（如 `MRILAB3.pdf`）建议先提取文本再对照实现：
 
@@ -114,14 +121,14 @@ disp(out.method)
 在 `task_fmri_pipeline_config.m` 中可切换：
 
 ```matlab
-cfg.preproc.sliceTimingMode = 'timing_ms';
-cfg.preproc.sliceTimingMs = [ ...
+cfg.preproc.pipeline.sliceTiming.mode = 'timing_ms';
+cfg.preproc.pipeline.sliceTiming.timingMs = [ ...
     0 1430 880 330 1760 1210 660 110 1540 990 440 1870 1320 770 220 ...
     1650 1100 550 0 1430 880 330 1760 1210 660 110 1540 990 440 1870 ...
     1320 770 220 1650 1100 550];
 ```
 
 说明：
-- `sliceTimingMs` 长度需等于 `nslices`
-- 如不设置 `refTimingMs`，默认使用 `sliceTimingMs(refSlice)` 作为参考层时间
+- `timingMs` 长度需等于 `nslices`
+- 如不设置 `refTimingMs`，默认使用 `timingMs(refSlice)` 作为参考层时间
 - `timing_ms` 模式可兼容同一时间采集多个切片（如多带）
