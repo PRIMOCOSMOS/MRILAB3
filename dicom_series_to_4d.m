@@ -35,7 +35,11 @@ function V4d = dicom_series_to_4d(dcmList)
         end
     end
 
-    nZ = infer_n_slices(slicePos, hdr{1});
+    [nZ, usedFallback] = infer_n_slices(slicePos, hdr{1});
+    if usedFallback && nFiles > 1
+        error(['无法从 DICOM 头稳定推断切片数（未检测到可靠的切片位置/头字段）。', ...
+               '请检查该序列是否缺失关键标签（如 ImagePositionPatient/NumberOfSlices）。']);
+    end
     assert(mod(nFiles, nZ) == 0, ...
         '无法从 DICOM 序列稳定推断 4D 结构：文件数(%d)不能被每时相切片数(%d)整除。', nFiles, nZ);
     nT = nFiles / nZ;
@@ -157,8 +161,9 @@ function [V4d, ok] = build_from_time_groups(files, slicePos, timeKey, tVals)
     ok = true;
 end
 
-function nZ = infer_n_slices(slicePos, firstHdr)
+function [nZ, usedFallback] = infer_n_slices(slicePos, firstHdr)
     nZ = nan;
+    usedFallback = false;
     valid = ~isnan(slicePos);
     if any(valid)
         sp = slicePos(valid);
@@ -175,6 +180,7 @@ function nZ = infer_n_slices(slicePos, firstHdr)
             nZ = double(firstHdr.ImagesInAcquisition);
         else
             nZ = 1;
+            usedFallback = true;
         end
     end
 end
