@@ -414,6 +414,8 @@ end
 % ============================== I/O 与工具函数 ============================
 function [V, info] = read_single_volume(inputDir, outDir)
     ensure_dir(outDir);
+    outPath = fullfile(outDir, 'anat_raw.nii');
+    wroteFromDicom = false;
     nii = dir(fullfile(inputDir, '*.nii*'));
     if ~isempty(nii)
         p = fullfile(nii(1).folder, nii(1).name);
@@ -423,9 +425,12 @@ function [V, info] = read_single_volume(inputDir, outDir)
     else
         dcm = dir(fullfile(inputDir, '**', '*.dcm'));
         assert(~isempty(dcm), '结构像目录中无 NIfTI 或 DICOM。');
-        [V, info] = dicom_series_to_volume(dcm);
+        [V, info] = convert_dicom_to_nifti_3d(dcm, outPath);
+        wroteFromDicom = true;
     end
-    write_nifti_like(V, info, fullfile(outDir, 'anat_raw.nii'));
+    if ~wroteFromDicom
+        write_nifti_like(V, info, outPath);
+    end
 end
 
 function [runs, infos] = read_functional_runs(funcDir, outDir)
@@ -447,6 +452,15 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
     d = dir(funcDir);
     d = d([d.isdir]);
     d = d(~startsWith({d.name}, '.'));
+    if isempty(d)
+        dcmTop = dir(fullfile(funcDir, '**', '*.dcm'));
+        if ~isempty(dcmTop)
+            outPath = fullfile(outDir, 'run01_raw.nii');
+            [V, info] = convert_dicom_to_nifti_4d(dcmTop, outPath);
+            runs{1} = V; infos{1} = info; %#ok<AGROW>
+            return;
+        end
+    end
     for i = 1:numel(d)
         runDir = fullfile(funcDir, d(i).name);
         nii = dir(fullfile(runDir, '*.nii*'));
@@ -455,13 +469,15 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
             info = niftiinfo(p);
             V = single(niftiread(info));
             assert(ndims(V) == 4, 'run %s 需为4D。', d(i).name);
+            write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
         else
             dcm = dir(fullfile(runDir, '**', '*.dcm'));
-            [V, info] = dicom_series_to_4d(dcm);
+            assert(~isempty(dcm), 'run %s 目录中无 NIfTI 或 DICOM。', d(i).name);
+            outPath = fullfile(outDir, sprintf('run%02d_raw.nii', i));
+            [V, info] = convert_dicom_to_nifti_4d(dcm, outPath);
         end
         runs{end + 1} = V; %#ok<AGROW>
         infos{end + 1} = info; %#ok<AGROW>
-        write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
     end
 end
 
@@ -929,7 +945,7 @@ function [V, info] = dicom_series_to_volume(dcmList)
     s = dicomread(files{1});
     V = zeros([size(s), numel(files)], 'single');
     for i = 1:numel(files), V(:,:,i) = single(dicomread(files{i})); end
-    info = niftiinfo_from_dicom(files{1}, size(V));
+    info = struct();
 end
 
 function [V4d, info] = dicom_series_to_4d(dcmList)
@@ -961,21 +977,25 @@ function [V4d, info] = dicom_series_to_4d(dcmList)
             V4d(:,:,z,t) = single(dicomread(files{idx(z)}));
         end
     end
-    info = niftiinfo_from_dicom(files{idxT1(ordZ(1))}, size(V4d));
+    info = struct();
 end
 
-function info = niftiinfo_from_dicom(oneFile, imgSize)
-    h = dicominfo(oneFile);
-    info = struct();
-    info.ImageSize = imgSize;
-    info.Datatype = 'single';
-    info.SpaceUnits = 'Millimeter';
-    info.TimeUnits = 'Second';
-    if isfield(h,'PixelSpacing')
-        px = double(h.PixelSpacing(:)');
-    else
-        px = [1 1];
+function [V, info] = convert_dicom_to_nifti_3d(dcmList, outPath)
+    ensure_dir(fileparts(outPath));
+    [V, ~] = dicom_series_to_volume(dcmList);
+    niftiwrite(single(V), outPath, 'Compressed', false);
+    info = niftiinfo(outPath);
+    V = single(niftiread(info));
+    if ndims(V) == 4
+        V = V(:, :, :, 1);
     end
-    if isfield(h,'SliceThickness'), st = double(h.SliceThickness); else, st = 1; end
-    info.PixelDimensions = [px st 1];
+end
+
+function [V4d, info] = convert_dicom_to_nifti_4d(dcmList, outPath)
+    ensure_dir(fileparts(outPath));
+    [V4d, ~] = dicom_series_to_4d(dcmList);
+    assert(ndims(V4d) == 4, 'DICOM 转换后功能像应为 4D。');
+    niftiwrite(single(V4d), outPath, 'Compressed', false);
+    info = niftiinfo(outPath);
+    V4d = single(niftiread(info));
 end
