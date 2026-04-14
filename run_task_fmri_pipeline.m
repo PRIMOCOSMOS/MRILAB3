@@ -847,7 +847,7 @@ function write_nifti_like(vol, refInfo, pathOut)
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol);
     if numel(info.ImageSize)==2, info.ImageSize(3)=1; end
-    info.Datatype = class(single(vol));
+    info.Datatype = 'single';
     safe_niftiwrite(single(vol), pathOut, info);
 end
 
@@ -855,7 +855,7 @@ function write_nifti_4d(vol4d, refInfo, pathOut)
     ensure_dir(fileparts(pathOut));
     info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol4d);
-    info.Datatype = class(single(vol4d));
+    info.Datatype = 'single';
     safe_niftiwrite(single(vol4d), pathOut, info);
 end
 
@@ -876,6 +876,7 @@ function infoOut = sanitize_nifti_info_for_write(infoIn)
 end
 
 function safe_niftiwrite(vol, pathOut, info)
+    % 最多尝试移除有限个未知字段，防止异常元信息导致死循环。
     maxStripAttempts = 12;
     infoTry = info;
     for k = 1:maxStripAttempts
@@ -892,13 +893,13 @@ function safe_niftiwrite(vol, pathOut, info)
         end
     end
     warning('niftiwrite:InfoFallback', ...
-        '写出 %s 时无法兼容参考头信息，已回退为无 Info 写出。', pathOut);
+        'Failed to keep compatible NIfTI header for %s; fallback to write without Info.', pathOut);
     niftiwrite(vol, pathOut, 'Compressed', false);
 end
 
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
-    % 同时兼容中英文报错与中英文引号格式。
+    % Match localized messages (CN/EN) and quote variants for unknown field errors.
     t = regexp(msg, '无法识别的字段名称\s*["“”]?([^"“”''\s]+)["“”]?', 'tokens', 'once');
     if ~isempty(t)
         fieldName = t{1};
