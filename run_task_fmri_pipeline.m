@@ -581,8 +581,8 @@ end
 
 function sigma = fwhm_to_sigma(fwhmMM, voxMM)
     % FWHM = 2*sqrt(2*ln(2))*sigma
-    FWHM_TO_SIGMA_FACTOR = 2 * sqrt(2 * log(2));
-    sigma = (fwhmMM ./ max(voxMM, eps)) / FWHM_TO_SIGMA_FACTOR;
+    fwhmToSigmaFactor = 2 * sqrt(2 * log(2));
+    sigma = (fwhmMM ./ max(voxMM, eps)) / fwhmToSigmaFactor;
 end
 
 function p = locate_first_existing(baseDir, names)
