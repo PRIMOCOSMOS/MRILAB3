@@ -72,9 +72,9 @@ function out = preprocess_subject(subjID, cfg)
     motionRuns = cell(numel(funcRuns), 1);
     for r = 1:numel(funcRuns)
         run4d = single(funcRuns{r});
-        run4d = drop_initial_volumes(run4d, cfg.preproc.removeFirstN);
-        run4d = slice_timing_correction(run4d, cfg.preproc);
-        [run4d, motion] = realign_4d(run4d, cfg.preproc);
+        run4d = module_remove_first_timepoints(run4d, cfg.preproc);
+        run4d = module_slice_timing(run4d, cfg.preproc);
+        [run4d, motion] = module_realign(run4d, cfg.preproc);
         preprocRuns{r} = run4d;
         motionRuns{r} = motion;
     end
@@ -85,10 +85,10 @@ function out = preprocess_subject(subjID, cfg)
 
     % --- 结构像到功能均值配准 ---
     meanFunc = mean(all4d, 4, 'omitnan');
-    [anatCoreg, tformAF] = coregister_anat_to_func(anatVol, meanFunc, cfg.preproc);
+    [anatCoreg, tformAF] = module_coregister(anatVol, meanFunc, cfg.preproc);
 
     % --- 结构像分割（GM/WM/CSF） ---
-    seg = segment_t1(anatCoreg, cfg.preproc);
+    seg = module_segment(anatCoreg, cfg.preproc);
 
     % --- 写中间结果 ---
     write_nifti_like(anatCoreg, anatInfo, fullfile(subjDer, 'anat', 'anat_coreg.nii'));
@@ -109,6 +109,64 @@ function out = preprocess_subject(subjID, cfg)
     out.tformAF = tformAF;
 end
 
+function V = module_remove_first_timepoints(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'removeFirstTimePoints') ...
+            && isfield(P.pipeline.removeFirstTimePoints, 'enabled') ...
+            && P.pipeline.removeFirstTimePoints.enabled
+        V = drop_initial_volumes(V, P.pipeline.removeFirstTimePoints.nVolumes);
+    end
+end
+
+function V = module_slice_timing(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'sliceTiming') ...
+            && isfield(P.pipeline.sliceTiming, 'enabled') ...
+            && P.pipeline.sliceTiming.enabled
+        st = P.pipeline.sliceTiming;
+        st.TR = P.TR;
+        st.sliceTimingMode = st.mode;
+        st.sliceTimingMs = st.timingMs;
+        V = slice_timing_correction(V, st);
+    end
+end
+
+function [V, motion] = module_realign(V, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'realign') ...
+            && isfield(P.pipeline.realign, 'enabled') ...
+            && P.pipeline.realign.enabled
+        rp = P.pipeline.realign;
+        rp.realignPyramidLevels = rp.pyramidLevels;
+        [V, motion] = realign_4d(V, rp);
+    else
+        motion = zeros(size(V, 4), 6, 'single');
+    end
+end
+
+function [anatReg, tform] = module_coregister(anat, meanFunc, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'coregister') ...
+            && isfield(P.pipeline.coregister, 'enabled') ...
+            && P.pipeline.coregister.enabled
+        cp = P.pipeline.coregister;
+        cp.coregPyramidLevels = cp.pyramidLevels;
+        [anatReg, tform] = coregister_anat_to_func(anat, meanFunc, cp);
+    else
+        anatReg = anat;
+        tform = affine3d(eye(4));
+    end
+end
+
+function seg = module_segment(anat, P)
+    if isfield(P, 'pipeline') && isfield(P.pipeline, 'segment') ...
+            && isfield(P.pipeline.segment, 'enabled') ...
+            && P.pipeline.segment.enabled
+        sp = P.pipeline.segment;
+        seg = segment_t1(anat, sp);
+    else
+        seg.csf = zeros(size(anat), 'single');
+        seg.gm = zeros(size(anat), 'single');
+        seg.wm = zeros(size(anat), 'single');
+    end
+end
+
 % ============================ 群体模板构建块 ==============================
 function tpl = build_group_template(subjData, cfg)
     fprintf('[group] building template...\n');
@@ -118,14 +176,23 @@ function tpl = build_group_template(subjData, cfg)
     allAnat = cat(4, subjData.anat);
     template = mean(allAnat, 4, 'omitnan');
 
+    if ~cfg.preproc.pipeline.normalize.enabled
+        tpl.volume = template;
+        tpl.info = subjData(1).anatInfo;
+        tpl.path = fullfile(cfg.paths.templateDir, 'group_template.nii');
+        write_nifti_like(template, tpl.info, tpl.path);
+        return;
+    end
+
     % 迭代：每轮将各受试者 anat 非线性配准到当前模板，再更新模板
-    for it = 1:cfg.normalization.templateIters
+    NP = cfg.preproc.pipeline.normalize;
+    for it = 1:NP.templateIters
         warpedAll = zeros([size(template), numel(subjData)], 'single');
         for i = 1:numel(subjData)
             moving = subjData(i).anat;
             [D, movingReg] = imregdemons(moving, template, ...
-                cfg.normalization.demonsIters, ...
-                'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
+                NP.demonsIters, ...
+                'AccumulatedFieldSmoothing', NP.demonsSmoothing);
             warpedAll(:, :, :, i) = movingReg;
             subjData(i).normField = D; %#ok<AGROW>
         end
@@ -142,22 +209,31 @@ end
 % ============================== 标准化和平滑 ==============================
 function out = normalize_subject_to_template(in, tpl, cfg)
     fprintf('[%s] normalize + smooth...\n', in.subjID);
-
-    [D, ~] = imregdemons(in.anat, tpl.volume, ...
-        cfg.normalization.demonsIters, ...
-        'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
-
+    NP = cfg.preproc.pipeline.normalize;
     V = size(in.func4d, 4);
-    funcNorm = zeros(size(in.func4d), 'single');
-    for t = 1:V
-        funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
-            'OutputView', imref3d(size(tpl.volume)));
+    D = [];
+    if NP.enabled
+        [D, ~] = imregdemons(in.anat, tpl.volume, ...
+            NP.demonsIters, ...
+            'AccumulatedFieldSmoothing', NP.demonsSmoothing);
+        funcNorm = zeros(size(in.func4d), 'single');
+        for t = 1:V
+            funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
+                'OutputView', imref3d(size(tpl.volume)));
+        end
+    else
+        funcNorm = in.func4d;
     end
 
-    sigma = fwhm_to_sigma(cfg.preproc.smoothFWHM, cfg.preproc.voxelSize);
-    funcSmooth = zeros(size(funcNorm), 'single');
-    for t = 1:V
-        funcSmooth(:, :, :, t) = imgaussfilt3(funcNorm(:, :, :, t), sigma);
+    SP = cfg.preproc.pipeline.smooth;
+    if SP.enabled
+        sigma = fwhm_to_sigma(SP.fwhm, SP.voxelSize);
+        funcSmooth = zeros(size(funcNorm), 'single');
+        for t = 1:V
+            funcSmooth(:, :, :, t) = imgaussfilt3(funcNorm(:, :, :, t), sigma);
+        end
+    else
+        funcSmooth = funcNorm;
     end
 
     out = in;
@@ -409,12 +485,18 @@ function shiftsSec = resolve_slice_timing_shifts(P, nz)
     mode = 'order'; % 回退默认：当配置未显式提供 sliceTimingMode 时使用传统顺序模式
     if isfield(P, 'sliceTimingMode') && ~isempty(P.sliceTimingMode)
         mode = lower(string(P.sliceTimingMode));
+    elseif isfield(P, 'mode') && ~isempty(P.mode)
+        mode = lower(string(P.mode));
     end
 
     if mode == "timing_ms"
-        assert(isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs), ...
-            'sliceTimingMode=timing_ms 时必须提供 sliceTimingMs。');
-        stMs = double(P.sliceTimingMs(:)');
+        if isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs)
+            stMs = double(P.sliceTimingMs(:)');
+        elseif isfield(P, 'timingMs') && ~isempty(P.timingMs)
+            stMs = double(P.timingMs(:)');
+        else
+            error('sliceTimingMode=timing_ms 时必须提供 sliceTimingMs/timingMs。');
+        end
         assert(numel(stMs) == nz, 'sliceTimingMs 长度(%d)必须等于切片数(%d)。', numel(stMs), nz);
 
         if isfield(P, 'refTimingMs') && ~isempty(P.refTimingMs)
