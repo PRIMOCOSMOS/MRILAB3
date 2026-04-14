@@ -5,13 +5,12 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
 
     niiTop = dir(fullfile(funcDir, '*.nii*'));
     if ~isempty(niiTop)
-        p = fullfile(niiTop(1).folder, niiTop(1).name);
-        info = niftiinfo(p);
-        V = single(niftiread(info));
-        assert(ndims(V) == 4, '功能像 NIfTI 必须为 4D。');
-        runs{1} = V; infos{1} = info; %#ok<AGROW>
-        write_nifti_4d_local(V, info, fullfile(outDir, 'run01_raw.nii'));
-        return;
+        [Vtop, infoTop] = select_best_top_level_nifti(niiTop);
+        if ~isempty(Vtop) && size(Vtop, 3) > 1
+            runs{1} = Vtop; infos{1} = infoTop; %#ok<AGROW>
+            write_nifti_4d_local(Vtop, infoTop, fullfile(outDir, 'run01_raw.nii'));
+            return;
+        end
     end
 
     d = dir(funcDir);
@@ -43,6 +42,31 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
         end
         runs{end + 1} = V; %#ok<AGROW>
         infos{end + 1} = info; %#ok<AGROW>
+    end
+end
+
+function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
+    Vbest = [];
+    infoBest = [];
+    bestScore = -inf;
+    [~, ord] = sort({niiList.name});
+    niiList = niiList(ord);
+    for i = 1:numel(niiList)
+        p = fullfile(niiList(i).folder, niiList(i).name);
+        info = niftiinfo(p);
+        V = single(niftiread(info));
+        if ndims(V) == 3
+            V = reshape(V, size(V, 1), size(V, 2), size(V, 3), 1);
+        end
+        if ndims(V) ~= 4
+            continue;
+        end
+        score = double(size(V, 3) > 1) * 1e9 + double(size(V, 4)) * 1e4 + double(size(V, 3));
+        if score > bestScore
+            Vbest = V;
+            infoBest = info;
+            bestScore = score;
+        end
     end
 end
 
