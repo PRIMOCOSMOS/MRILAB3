@@ -877,6 +877,8 @@ end
 
 function safe_niftiwrite(vol, pathOut, info)
     infoTry = info;
+    % Keep at least a few retries even for tiny headers, and allow a small buffer
+    % beyond current field count for version-specific parser behavior.
     minStripAttempts = 4;
     extraStripAttempts = 2;
     maxStripAttempts = max(minStripAttempts, numel(fieldnames(infoTry)) + extraStripAttempts);
@@ -900,7 +902,7 @@ end
 
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
-    % Match localized messages (CN/EN); quoteClass includes ASCII/Chinese double quotes and ASCII single quote.
+    % Match localized messages (CN/EN); quoteClass includes: " , “ , ” and '.
     quoteClass = '"“”''';
     cnUnknownFieldPattern = ['无法识别的字段名称[:：\s]*[', quoteClass, ']?([^', quoteClass, '\s]+)'];
     t = regexp(msg, cnUnknownFieldPattern, 'tokens', 'once');
