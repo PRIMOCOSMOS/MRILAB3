@@ -49,6 +49,8 @@ function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
     Vbest = [];
     infoBest = [];
     bestScore = -inf;
+    WEIGHT_MULTI_SLICE = 1e9;
+    WEIGHT_TIME_POINTS = 1e4;
     [~, ord] = sort({niiList.name});
     niiList = niiList(ord);
     for i = 1:numel(niiList)
@@ -63,11 +65,11 @@ function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
             continue;
         end
         % 评分优先级：先强偏好真实多切片数据，再按时间点数，最后按切片数细分。
-        weightMultiSlice = 1e9;
-        weightTimePoints = 1e4;
-        score = double(size(V, 3) > 1) * weightMultiSlice ...
-              + double(size(V, 4)) * weightTimePoints ...
-              + double(size(V, 3));
+        nSlices = size(V, 3);
+        nTimePoints = size(V, 4);
+        score = double(nSlices > 1) * WEIGHT_MULTI_SLICE ...
+              + double(nTimePoints) * WEIGHT_TIME_POINTS ...
+              + double(nSlices);
         if score > bestScore
             Vbest = V;
             infoBest = info;
