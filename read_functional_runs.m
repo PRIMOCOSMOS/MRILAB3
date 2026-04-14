@@ -5,13 +5,12 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
 
     niiTop = dir(fullfile(funcDir, '*.nii*'));
     if ~isempty(niiTop)
-        p = fullfile(niiTop(1).folder, niiTop(1).name);
-        info = niftiinfo(p);
-        V = single(niftiread(info));
-        assert(ndims(V) == 4, '功能像 NIfTI 必须为 4D。');
-        runs{1} = V; infos{1} = info; %#ok<AGROW>
-        write_nifti_4d_local(V, info, fullfile(outDir, 'run01_raw.nii'));
-        return;
+        [Vtop, infoTop] = select_best_top_level_nifti(niiTop);
+        if ~isempty(Vtop) && size(Vtop, 3) > 1
+            runs{1} = Vtop; infos{1} = infoTop; %#ok<AGROW>
+            write_nifti_4d_local(Vtop, infoTop, fullfile(outDir, 'run01_raw.nii'));
+            return;
+        end
     end
 
     d = dir(funcDir);
@@ -44,6 +43,47 @@ function [runs, infos] = read_functional_runs(funcDir, outDir)
         runs{end + 1} = V; %#ok<AGROW>
         infos{end + 1} = info; %#ok<AGROW>
     end
+end
+
+function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
+    % 从同一目录下多个 NIfTI 候选中选择最可能的功能像 run（优先多切片、再优先更多时间点）。
+    % 输入:
+    %   niiList - dir() 返回的 NIfTI 文件结构体数组。
+    % 输出:
+    %   Vbest   - 选中的 4D 功能像数据；若无可用候选则为空。
+    %   infoBest- 对应的 NIfTI 头信息；若无可用候选则为空。
+    Vbest = [];
+    infoBest = [];
+    bestKey = [-1, -1, -1]; % [isMultiSlice, nTimePoints, nSlices]
+    [~, ord] = sort({niiList.name});
+    niiList = niiList(ord);
+    for i = 1:numel(niiList)
+        p = fullfile(niiList(i).folder, niiList(i).name);
+        info = niftiinfo(p);
+        V = single(niftiread(info));
+        dims = ndims(V);
+        if dims == 3
+            % 统一到 4D 形状，便于后续候选比较（单体积视作 nt=1）。
+            V = reshape(V, size(V, 1), size(V, 2), size(V, 3), 1);
+        elseif dims ~= 4
+            continue;
+        end
+        % 评分优先级：先强偏好真实多切片数据，再按时间点数，最后按切片数细分。
+        nSlices = size(V, 3);
+        nTimePoints = size(V, 4);
+        key = [nSlices > 1, nTimePoints, nSlices];
+        if is_key_better_local(key, bestKey)
+            Vbest = V;
+            infoBest = info;
+            bestKey = key;
+        end
+    end
+end
+
+function tf = is_key_better_local(key, bestKey)
+    tf = key(1) > bestKey(1) || ...
+        (key(1) == bestKey(1) && key(2) > bestKey(2)) || ...
+        (key(1) == bestKey(1) && key(2) == bestKey(2) && key(3) > bestKey(3));
 end
 
 function ensure_dir(p)
