@@ -876,9 +876,8 @@ function infoOut = sanitize_nifti_info_for_write(infoIn)
 end
 
 function safe_niftiwrite(vol, pathOut, info)
-    % 最多尝试移除有限个未知字段，防止异常元信息导致死循环。
-    maxStripAttempts = 12;
     infoTry = info;
+    maxStripAttempts = max(4, numel(fieldnames(infoTry)) + 2);
     for k = 1:maxStripAttempts
         try
             niftiwrite(vol, pathOut, infoTry, 'Compressed', false);
@@ -900,12 +899,14 @@ end
 function fieldName = extract_unknown_info_field(msg)
     fieldName = '';
     % Match localized messages (CN/EN) and quote variants for unknown field errors.
-    t = regexp(msg, '无法识别的字段名称[:：\s]*["“”'']?([^"“”''\s]+)', 'tokens', 'once');
+    cnUnknownFieldPattern = '无法识别的字段名称[:：\s]*["“”'']?([^"“”''\s]+)';
+    t = regexp(msg, cnUnknownFieldPattern, 'tokens', 'once');
     if ~isempty(t)
         fieldName = t{1};
         return;
     end
-    t = regexp(msg, 'Unrecognized field name\s*''([^'']+)''', 'tokens', 'once');
+    enUnknownFieldPattern = 'Unrecognized field name\s*''([^'']+)''';
+    t = regexp(msg, enUnknownFieldPattern, 'tokens', 'once');
     if ~isempty(t)
         fieldName = t{1};
     end
