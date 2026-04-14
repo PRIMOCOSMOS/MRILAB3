@@ -1,24 +1,22 @@
 # MRILAB3
 
-## 任务态 fMRI-BOLD 全流程 MATLAB 复现
+## Standalone 任务态 fMRI-BOLD 1:1 逻辑复现（MATLAB 2025a）
 
-本仓库已提供基于 **SPM12（DPABI任务态处理核心思路）** 的完整脚本：
+本仓库当前实现目标：
 
-- `./run_task_fmri_pipeline.m`
-- `./task_fmri_pipeline_config.m`
+- **不依赖 DPABI/SPM 的预处理与统计函数调用**
+- 以代码显式展示每一步计算逻辑（原始数据→预处理→GLM→阈值→可视化）
+- 兼容你使用的 **SPM25 + MATLAB 2025a** 环境（即使安装了 SPM25，本流程也不调用其处理API）
+- 输出更现代化图形：切面叠加、3D 表面渲染、可选体绘制（`volshow`）
 
-流程覆盖：
+核心文件：
 
-1. 原始数据读取（DICOM/NIfTI）
-2. 预处理（去前时间点、Slice Timing、Realign、Coreg、New Segment + DARTEL、Normalize、Smooth）
-3. 一级统计（Specify/Estimate/Contrast，AR(1)）
-4. 结果输出（阈值化结果、MNI坐标表、正交立体视图与3D渲染图）
+- `/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m`
+- `/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m`
 
 ---
 
-## 目录结构（参考 DPABI 习惯）
-
-在仓库根目录下准备：
+## 数据目录（参考 DPABI 约定）
 
 ```text
 DataRaw/
@@ -38,26 +36,65 @@ Onsets/
     conditions.mat
 ```
 
-`conditions.mat` 至少包含 3 个变量（SPM 一级分析标准格式）：
+`conditions.mat` 至少包含：
 
 - `names`：条件名 cell，例如 `{'ConditionA','ConditionB'}`
-- `onsets`：每个条件 onset（秒）cell，例如 `{[10 40 70],[25 55 85]}`
-- `durations`：每个条件持续时间（秒）cell，例如 `{[2 2 2],[2 2 2]}`
+- `onsets`：每个条件 onset（秒）cell
+- `durations`：每个条件持续时间（秒）cell
 
 ---
 
-## 运行方法
+## 流程模块（代码内有对应分块注释）
 
-1. 打开 MATLAB，加入 SPM12 路径。
-2. 按需修改 `./task_fmri_pipeline_config.m` 参数（TR、切片顺序、对比等）。
-3. 在 MATLAB 执行：
+1. 原始数据读取（NIfTI/DICOM）
+2. 去前若干时间点
+3. Slice Timing（显式插值）
+4. Motion Realign（3D rigid 配准）
+5. T1→功能均值配准（MI）
+6. T1 分割（bias 校正 + 3类概率映射）
+7. 群体模板迭代构建 + 非线性标准化（demons）
+8. 高斯平滑
+9. 一级 GLM（HRF卷积、HPF、AR(1) 预白化、GLS/t-contrast）
+10. 双阈值激活图（voxel + cluster）
+11. 现代可视化导出（2D/3D/体绘制）
+
+---
+
+## 运行方式
+
+在 MATLAB 2025a 中：
 
 ```matlab
-run_task_fmri_pipeline
+run('/home/runner/work/MRILAB3/MRILAB3/run_task_fmri_pipeline.m')
 ```
 
-输出目录默认在：
+参数修改位置：
 
-- `./Derivatives/`
+```matlab
+/home/runner/work/MRILAB3/MRILAB3/task_fmri_pipeline_config.m
+```
 
-其中每个被试会生成预处理结果、一级统计目录及结果图像（`orthview_activation.png`、`render_activation.png`）与阈值结果表（`xSPM_thresholded.mat`）。
+输出目录：
+
+```text
+/home/runner/work/MRILAB3/MRILAB3/Derivatives/
+```
+
+每个被试可见：
+
+- `func_preproc/motion_6dof.mat`
+- `func_norm/func_smooth_norm_4d.nii`
+- `first_level/tmap.nii`
+- `first_level/mask_thresholded.nii`
+- `visualization/modern_slice_overlay.png`
+- `visualization/modern_3d_surface.png`
+- `visualization/modern_volshow.png`（若支持）
+- `visualization/activation_peaks.csv`
+
+---
+
+## 说明
+
+- 本实现强调“**可学习、可追踪、可独立复现**”；
+- 复杂步骤（例如 DARTEL/GRF）在此以独立可读的 MATLAB 近似实现替代；
+- 若你希望下一步进一步逼近你课件中的每个数学细节（例如更严格 ReML/GRF/FWE），可以在当前脚本上继续逐块替换实现。

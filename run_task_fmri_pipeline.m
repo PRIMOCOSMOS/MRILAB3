@@ -1,61 +1,45 @@
 function run_task_fmri_pipeline()
 % RUN_TASK_FMRI_PIPELINE
 % -------------------------------------------------------------------------
-% 基于 DPABI/SPM 思路实现任务态 fMRI-BOLD 完整流程：
-% 1) 原始数据(DICOM/NIfTI)准备
-% 2) 预处理：去前若干时间点、切片时序、重对齐、配准、分割+DARTEL、标准化、平滑
-% 3) 一级统计：模型指定、估计、对比
-% 4) 结果：阈值化统计图 + MNI 坐标标注 + 立体视图导出
-%
-% 运行前请先修改配置文件：
-%   cfg = task_fmri_pipeline_config();
-%
-% 依赖：
-%   - MATLAB
-%   - SPM12 (已加入 MATLAB path)
-%
-% 数据组织参考 DPABI 风格（可在配置中微调）：
-%   DataRaw/
-%     Sub001/
-%       anat/ 或 T1Img/
-%       func/ 或 FunImg/
+% Standalone task-fMRI pipeline (MATLAB 2025a, SPM25-compatible environment)
+% 说明：
+% 1) 本脚本不调用 DPABI/SPM 预处理与统计函数；
+% 2) 每一步显式实现核心计算逻辑，便于学习和复现；
+% 3) 使用 MATLAB 内置能力（niftiread/niftiwrite/imreg*/imwarp/volshow 等）。
 % -------------------------------------------------------------------------
 
     cfg = task_fmri_pipeline_config();
-
-    % --------------------------- 环境检查 -------------------------------
-    assert(exist('spm', 'file') == 2, 'SPM 未在 MATLAB 路径中，请先 addpath(spm12).');
-    spm('defaults', 'fmri');
-    spm_jobman('initcfg');
+    ensure_dir(cfg.paths.derivativeDir);
 
     subjects = discover_subjects(cfg.paths.dataRawDir);
-    assert(~isempty(subjects), '未在 %s 中发现受试者目录。', cfg.paths.dataRawDir);
+    assert(~isempty(subjects), '未发现被试目录: %s', cfg.paths.dataRawDir);
 
-    % --------------------------- 逐被试处理 -----------------------------
-    preprocInfo = struct([]);
-    for s = 1:numel(subjects)
-        subjID = subjects{s};
-        fprintf('\n[%s] ===== 处理开始: %s =====\n', datestr(now, 31), subjID);
-        preprocInfo(s) = run_preprocessing_for_subject(subjID, cfg); %#ok<AGROW>
+    fprintf('\n=== [1/4] 预处理与配准 ===\n');
+    subjData = struct([]);
+    for i = 1:numel(subjects)
+        subjData(i) = preprocess_subject(subjects{i}, cfg); %#ok<AGROW>
     end
 
-    % ------------------------- DARTEL 群体模板 ---------------------------
-    run_group_dartel(preprocInfo, cfg);
-
-    % ------------------ 标准化+平滑 + 一级统计 + 结果可视化 ---------------
-    for s = 1:numel(preprocInfo)
-        subjID = preprocInfo(s).subjID;
-        fprintf('\n[%s] ===== 一级分析开始: %s =====\n', datestr(now, 31), subjID);
-        normalize_and_smooth_subject(preprocInfo(s), cfg);
-        run_first_level_glm(preprocInfo(s), cfg);
-        render_subject_results(preprocInfo(s), cfg);
+    fprintf('\n=== [2/4] 模板构建与标准化 ===\n');
+    tpl = build_group_template(subjData, cfg);
+    for i = 1:numel(subjData)
+        subjData(i) = normalize_subject_to_template(subjData(i), tpl, cfg);
     end
 
-    fprintf('\n[%s] 全流程完成。\n', datestr(now, 31));
+    fprintf('\n=== [3/4] 一级 GLM 分析 ===\n');
+    for i = 1:numel(subjData)
+        subjData(i).glm = first_level_glm(subjData(i), cfg);
+    end
+
+    fprintf('\n=== [4/4] 现代化可视化 ===\n');
+    for i = 1:numel(subjData)
+        visualize_subject_result(subjData(i), tpl, cfg);
+    end
+
+    fprintf('\nPipeline finished.\n');
 end
 
-% ============================== 功能块 1 ================================
-% 被试发现
+% ================================ 被试发现 ================================
 function subjects = discover_subjects(dataRawDir)
     d = dir(dataRawDir);
     d = d([d.isdir]);
@@ -64,510 +48,636 @@ function subjects = discover_subjects(dataRawDir)
     subjects = sort(names);
 end
 
-% ============================== 功能块 2 ================================
-% 单被试预处理（至分割输出）
-function info = run_preprocessing_for_subject(subjID, cfg)
-    subjRawDir = fullfile(cfg.paths.dataRawDir, subjID);
-    subjWorkDir = fullfile(cfg.paths.derivativeDir, subjID);
-    ensure_dir(subjWorkDir);
+% ============================ 单被试预处理块 ==============================
+function out = preprocess_subject(subjID, cfg)
+    fprintf('[%s] preprocess...\n', subjID);
 
-    % ---------- 参数局部化：目录候选 ----------
-    anatDir = locate_first_existing(subjRawDir, cfg.paths.anatDirCandidates);
-    funcDir = locate_first_existing(subjRawDir, cfg.paths.funcDirCandidates);
-    assert(~isempty(anatDir), '受试者 %s 未找到解剖目录。', subjID);
-    assert(~isempty(funcDir), '受试者 %s 未找到功能目录。', subjID);
+    subjRaw = fullfile(cfg.paths.dataRawDir, subjID);
+    subjDer = fullfile(cfg.paths.derivativeDir, subjID);
+    ensure_dir(subjDer);
 
-    % ---------- 原始数据转换：DICOM -> NIfTI ----------
-    anatNii = ensure_single_nifti(anatDir, fullfile(subjWorkDir, 'anat_nifti'));
-    runNii4D = ensure_run_niftis(funcDir, fullfile(subjWorkDir, 'func_nifti'));
-    assert(~isempty(runNii4D), '受试者 %s 未找到功能 NIfTI。', subjID);
+    anatDir = locate_first_existing(subjRaw, cfg.paths.anatDirCandidates);
+    funcDir = locate_first_existing(subjRaw, cfg.paths.funcDirCandidates);
+    assert(~isempty(anatDir) && ~isempty(funcDir), '被试 %s 的 anat/func 目录不完整。', subjID);
 
-    % ---------- 去前若干时间点 ----------
-    trimmed4D = cell(size(runNii4D));
-    for r = 1:numel(runNii4D)
-        outDir = fullfile(subjWorkDir, sprintf('run%02d_trim', r));
-        ensure_dir(outDir);
-        trimmed4D{r} = remove_first_volumes(runNii4D{r}, cfg.preproc.removeFirstN, outDir);
+    % --- 读取并保存结构像 ---
+    [anatVol, anatInfo] = read_single_volume(anatDir, fullfile(subjDer, 'anat'));
+
+    % --- 读取功能像 run ---
+    [funcRuns, funcInfo] = read_functional_runs(funcDir, fullfile(subjDer, 'func_raw'));
+    assert(~isempty(funcRuns), '被试 %s 无功能像。', subjID);
+
+    % --- run 级预处理 ---
+    preprocRuns = cell(numel(funcRuns), 1);
+    motionRuns = cell(numel(funcRuns), 1);
+    for r = 1:numel(funcRuns)
+        run4d = single(funcRuns{r});
+        run4d = drop_initial_volumes(run4d, cfg.preproc.removeFirstN);
+        run4d = slice_timing_correction(run4d, cfg.preproc);
+        [run4d, motion] = realign_4d(run4d, cfg.preproc);
+        preprocRuns{r} = run4d;
+        motionRuns{r} = motion;
     end
 
-    % ---------- 分离4D为3D(供SPM批处理) ----------
-    runScans = cell(size(trimmed4D));
-    for r = 1:numel(trimmed4D)
-        runDir = fullfile(subjWorkDir, sprintf('run%02d_3d', r));
-        ensure_dir(runDir);
-        copyfile(trimmed4D{r}, fullfile(runDir, 'trimmed.nii'));
-        spm_file_split(fullfile(runDir, 'trimmed.nii'));
-        runScans{r} = cellstr(spm_select('ExtFPList', runDir, '^trimmed_.*\.nii$', Inf));
-        assert(~isempty(runScans{r}), '受试者 %s run %d 分离3D失败。', subjID, r);
-    end
+    % --- 合并 run ---
+    all4d = cat(4, preprocRuns{:});
+    motionAll = vertcat(motionRuns{:});
 
-    % ---------- 切片时序 ----------
-    runScans = run_slice_timing(runScans, cfg);
+    % --- 结构像到功能均值配准 ---
+    meanFunc = mean(all4d, 4, 'omitnan');
+    [anatCoreg, tformAF] = coregister_anat_to_func(anatVol, meanFunc, cfg.preproc);
 
-    % ---------- 重对齐（含重采样） ----------
-    [runScans, meanFuncPath, motionParamFiles] = run_realign_estwrite(runScans, cfg);
+    % --- 结构像分割（GM/WM/CSF） ---
+    seg = segment_t1(anatCoreg, cfg.preproc);
 
-    % ---------- T1 到功能均值图配准 ----------
-    coregAnat = run_coregister_estwrite(anatNii, meanFuncPath, cfg);
+    % --- 写中间结果 ---
+    write_nifti_like(anatCoreg, anatInfo, fullfile(subjDer, 'anat', 'anat_coreg.nii'));
+    write_nifti_like(meanFunc, funcInfo{1}, fullfile(subjDer, 'func_preproc', 'mean_func.nii'));
+    save(fullfile(subjDer, 'func_preproc', 'motion_6dof.mat'), 'motionAll');
+    write_nifti_like(seg.gm, anatInfo, fullfile(subjDer, 'anat', 'gm_prob.nii'));
+    write_nifti_like(seg.wm, anatInfo, fullfile(subjDer, 'anat', 'wm_prob.nii'));
+    write_nifti_like(seg.csf, anatInfo, fullfile(subjDer, 'anat', 'csf_prob.nii'));
 
-    % ---------- New Segment ----------
-    [rc1, rc2, flowField] = run_new_segment(coregAnat, cfg);
-
-    info.subjID = subjID;
-    info.subjWorkDir = subjWorkDir;
-    info.runScansRealigned = runScans;
-    info.motionParamFiles = motionParamFiles;
-    info.coregAnat = coregAnat;
-    info.rc1 = rc1;
-    info.rc2 = rc2;
-    info.flowField = flowField;
+    out.subjID = subjID;
+    out.subjDer = subjDer;
+    out.anat = anatCoreg;
+    out.anatInfo = anatInfo;
+    out.func4d = all4d;
+    out.funcInfo = funcInfo{1};
+    out.motion = motionAll;
+    out.seg = seg;
+    out.tformAF = tformAF;
 end
 
-% ============================== 功能块 3 ================================
-% DARTEL 群体模板构建
-function run_group_dartel(preprocInfo, cfg)
-    rc1_all = cell(numel(preprocInfo), 1);
-    rc2_all = cell(numel(preprocInfo), 1);
-    for i = 1:numel(preprocInfo)
-        rc1_all{i} = preprocInfo(i).rc1;
-        rc2_all{i} = preprocInfo(i).rc2;
-    end
+% ============================ 群体模板构建块 ==============================
+function tpl = build_group_template(subjData, cfg)
+    fprintf('[group] building template...\n');
+    ensure_dir(cfg.paths.templateDir);
 
-    ensure_dir(cfg.paths.dartelDir);
-    prev = pwd;
-    dirCleanup = onCleanup(@() cd(prev)); %#ok<NASGU>
-    cd(cfg.paths.dartelDir);
+    % 初始模板：所有受试者结构像平均
+    allAnat = cat(4, subjData.anat);
+    template = mean(allAnat, 4, 'omitnan');
 
-    matlabbatch = [];
-    matlabbatch{1}.spm.tools.dartel.warp.images = {rc1_all, rc2_all};
-    matlabbatch{1}.spm.tools.dartel.warp.settings.template = cfg.preproc.dartelTemplateName;
-    matlabbatch{1}.spm.tools.dartel.warp.settings.rform = 0;
-    matlabbatch{1}.spm.tools.dartel.warp.settings.param = cfg.preproc.dartelParam;
-    matlabbatch{1}.spm.tools.dartel.warp.settings.optim = cfg.preproc.dartelOptim;
-    spm_jobman('run', matlabbatch);
-end
-
-% ============================== 功能块 4 ================================
-% DARTEL 标准化 + 平滑
-function normalize_and_smooth_subject(info, cfg)
-    subjDir = info.subjWorkDir;
-    normDir = fullfile(subjDir, 'normalized');
-    smoothDir = fullfile(subjDir, 'smoothed');
-    ensure_dir(normDir);
-    ensure_dir(smoothDir);
-
-    allRealigned = vertcat(info.runScansRealigned{:});
-    allRealigned = to_scan_refs(allRealigned);
-
-    matlabbatch = [];
-
-    % ---------- DARTEL 到 MNI ----------
-    matlabbatch{1}.spm.tools.dartel.mni_norm.template = {fullfile(cfg.paths.dartelDir, cfg.preproc.dartelLastTemplate)};
-    matlabbatch{1}.spm.tools.dartel.mni_norm.data.subj.flowfield = {info.flowField};
-    matlabbatch{1}.spm.tools.dartel.mni_norm.data.subj.images = {allRealigned};
-    matlabbatch{1}.spm.tools.dartel.mni_norm.vox = cfg.preproc.normalizeVoxelSize;
-    matlabbatch{1}.spm.tools.dartel.mni_norm.bb = cfg.preproc.normalizeBoundingBox;
-    matlabbatch{1}.spm.tools.dartel.mni_norm.preserve = 0;
-    matlabbatch{1}.spm.tools.dartel.mni_norm.fwhm = [0 0 0];
-
-    spm_jobman('run', matlabbatch);
-
-    % 收集标准化输出
-    wImgs = cellstr(spm_select('FPListRec', subjDir, '^wra.*\.nii$'));
-    assert(~isempty(wImgs), '受试者 %s 未找到标准化图像。', info.subjID);
-    for i = 1:numel(wImgs)
-        copyfile(strtrim(wImgs{i}), fullfile(normDir, [num2str(i, '%05d') '.nii']));
-    end
-
-    % ---------- 空间平滑 ----------
-    normImgs = cellstr(spm_select('FPList', normDir, '^\d+\.nii$'));
-    normImgs = to_scan_refs(normImgs);
-
-    matlabbatch = [];
-    matlabbatch{1}.spm.spatial.smooth.data = normImgs;
-    matlabbatch{1}.spm.spatial.smooth.fwhm = cfg.preproc.smoothFWHM;
-    matlabbatch{1}.spm.spatial.smooth.dtype = 0;
-    matlabbatch{1}.spm.spatial.smooth.im = 0;
-    matlabbatch{1}.spm.spatial.smooth.prefix = 's';
-    spm_jobman('run', matlabbatch);
-end
-
-% ============================== 功能块 5 ================================
-% 一级 GLM：Specify -> Estimate -> Contrast
-function run_first_level_glm(info, cfg)
-    firstLevelDir = fullfile(info.subjWorkDir, 'first_level');
-    ensure_dir(firstLevelDir);
-
-    condFile = fullfile(cfg.paths.onsetDir, info.subjID, cfg.firstLevel.conditionFileName);
-    assert(exist(condFile, 'file') == 2, ...
-        '未找到条件文件: %s (请参照 README 提供 names/onsets/durations)', condFile);
-    S = load(condFile);
-    assert(isfield(S, 'names') && isfield(S, 'onsets') && isfield(S, 'durations'), ...
-        '条件文件必须包含 names/onsets/durations.');
-
-    scans = cellstr(spm_select('FPListRec', fullfile(info.subjWorkDir, 'smoothed'), '^s\d+\.nii$'));
-    scans = to_scan_refs(scans);
-    assert(~isempty(scans), '受试者 %s 未找到平滑后功能图像。', info.subjID);
-
-    % -------- 参数局部化：默认单 session；如多 run 可拓展为逐 run 指定 -------
-    matlabbatch = [];
-    matlabbatch{1}.spm.stats.fmri_spec.dir = {firstLevelDir};
-    matlabbatch{1}.spm.stats.fmri_spec.timing.units = cfg.firstLevel.units;
-    matlabbatch{1}.spm.stats.fmri_spec.timing.RT = cfg.firstLevel.TR;
-    matlabbatch{1}.spm.stats.fmri_spec.timing.fmri_t = cfg.firstLevel.fmri_t;
-    matlabbatch{1}.spm.stats.fmri_spec.timing.fmri_t0 = cfg.firstLevel.fmri_t0;
-    matlabbatch{1}.spm.stats.fmri_spec.sess.scans = scans;
-
-    for c = 1:numel(S.names)
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).name = S.names{c};
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).onset = S.onsets{c};
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).duration = S.durations{c};
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).tmod = 0;
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).pmod = struct('name', {}, 'param', {}, 'poly', {});
-        matlabbatch{1}.spm.stats.fmri_spec.sess.cond(c).orth = 1;
-    end
-
-    if cfg.firstLevel.includeMotionRegressors
-        rp = info.motionParamFiles;
-        rp = rp(cellfun(@(x) exist(x, 'file') == 2, rp));
-        if ~isempty(rp)
-            % 多 run 时建议按 session 分配；此处合并附加
-            allRP = fullfile(firstLevelDir, 'motion_regressors.txt');
-            concat_motion_params(rp, allRP);
-            matlabbatch{1}.spm.stats.fmri_spec.sess.multi_reg = {allRP};
-        else
-            matlabbatch{1}.spm.stats.fmri_spec.sess.multi_reg = {''};
+    % 迭代：每轮将各受试者 anat 非线性配准到当前模板，再更新模板
+    for it = 1:cfg.normalization.templateIters
+        warpedAll = zeros([size(template), numel(subjData)], 'single');
+        for i = 1:numel(subjData)
+            moving = subjData(i).anat;
+            [D, movingReg] = imregdemons(moving, template, ...
+                cfg.normalization.demonsIters, ...
+                'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
+            warpedAll(:, :, :, i) = movingReg;
+            subjData(i).normField = D; %#ok<AGROW>
         end
+        template = mean(warpedAll, 4, 'omitnan');
+        fprintf('[group] template iteration %d done.\n', it);
+    end
+
+    tpl.volume = template;
+    tpl.info = subjData(1).anatInfo;
+    tpl.path = fullfile(cfg.paths.templateDir, 'group_template.nii');
+    write_nifti_like(template, tpl.info, tpl.path);
+end
+
+% ============================== 标准化和平滑 ==============================
+function out = normalize_subject_to_template(in, tpl, cfg)
+    fprintf('[%s] normalize + smooth...\n', in.subjID);
+
+    [D, ~] = imregdemons(in.anat, tpl.volume, ...
+        cfg.normalization.demonsIters, ...
+        'AccumulatedFieldSmoothing', cfg.normalization.demonsSmoothing);
+
+    V = size(in.func4d, 4);
+    funcNorm = zeros(size(in.func4d), 'single');
+    for t = 1:V
+        funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
+            'OutputView', imref3d(size(tpl.volume)));
+    end
+
+    sigma = fwhm_to_sigma(cfg.preproc.smoothFWHM, cfg.preproc.voxelSize);
+    funcSmooth = zeros(size(funcNorm), 'single');
+    for t = 1:V
+        funcSmooth(:, :, :, t) = imgaussfilt3(funcNorm(:, :, :, t), sigma);
+    end
+
+    out = in;
+    out.normField = D;
+    out.funcNorm = funcNorm;
+    out.funcSmooth = funcSmooth;
+
+    outDir = fullfile(in.subjDer, 'func_norm');
+    ensure_dir(outDir);
+    write_nifti_4d(funcSmooth, tpl.info, fullfile(outDir, 'func_smooth_norm_4d.nii'));
+end
+
+% ============================== 一级统计分析 ==============================
+function glm = first_level_glm(subj, cfg)
+    fprintf('[%s] first-level GLM...\n', subj.subjID);
+
+    condPath = fullfile(cfg.paths.onsetDir, subj.subjID, cfg.firstLevel.conditionFileName);
+    assert(exist(condPath, 'file') == 2, '缺少条件文件: %s', condPath);
+    C = load(condPath);
+    assert(isfield(C, 'names') && isfield(C, 'onsets') && isfield(C, 'durations'), ...
+        'conditions.mat 必须包含 names/onsets/durations');
+
+    Y4d = subj.funcSmooth;
+    T = size(Y4d, 4);
+    Y = reshape(Y4d, [], T)';         % T x V
+
+    % --- 构建设计矩阵 ---
+    Xtask = build_task_regressors(C.names, C.onsets, C.durations, T, cfg.firstLevel);
+    Xnuis = build_nuisance_regressors(subj.motion, T, cfg.firstLevel);
+    X = [Xtask, Xnuis];
+    X = zscore_cols(X);
+    X = [X, ones(T, 1)];              % 截距
+
+    % --- 高通滤波 ---
+    [Yhp, Xhp] = highpass_dct(Y, X, cfg.firstLevel.hpf, cfg.preproc.TR);
+
+    % --- AR(1) 预白化 ---
+    rho = estimate_global_ar1(Yhp);
+    [Yw, Xw] = ar1_prewhiten(Yhp, Xhp, rho);
+
+    % --- GLS(whitened OLS) ---
+    XtX = Xw' * Xw;
+    XtY = Xw' * Yw;
+    beta = XtX \ XtY;                  % P x V
+    res = Yw - Xw * beta;              % T x V
+    dof = size(Xw, 1) - rank(Xw);
+    sigma2 = sum(res.^2, 1) / max(dof, 1);   % 1 x V
+
+    % --- Contrast/T-map ---
+    c = cfg.firstLevel.contrastWeights(:);
+    assert(numel(c) == size(Xtask, 2), 'contrastWeights 与任务回归列数不一致。');
+    cFull = [c; zeros(size(Xnuis, 2), 1); 0];
+    cbeta = cFull' * beta;                             % 1 x V
+    varC = (cFull' * (XtX \ cFull));                   % scalar
+    tmap = cbeta ./ sqrt(max(eps, sigma2 * varC));     % 1 x V
+    tmap3 = reshape(single(tmap), size(Y4d, 1), size(Y4d, 2), size(Y4d, 3));
+
+    % --- 双阈值：voxel p + cluster extent ---
+    mask = threshold_tmap(tmap3, dof, cfg.results.voxelPThreshold, cfg.results.clusterExtent);
+
+    outDir = fullfile(subj.subjDer, 'first_level');
+    ensure_dir(outDir);
+    write_nifti_like(tmap3, subj.funcInfo, fullfile(outDir, 'tmap.nii'));
+    write_nifti_like(single(mask), subj.funcInfo, fullfile(outDir, 'mask_thresholded.nii'));
+
+    glm.X = X;
+    glm.beta = beta;
+    glm.dof = dof;
+    glm.rho = rho;
+    glm.tmap = tmap3;
+    glm.mask = mask;
+    glm.outDir = outDir;
+end
+
+% ============================== 现代可视化块 ==============================
+function visualize_subject_result(subj, tpl, cfg)
+    fprintf('[%s] visualization...\n', subj.subjID);
+    tmap = subj.glm.tmap;
+    mask = subj.glm.mask;
+    anat = tpl.volume;
+
+    outDir = fullfile(subj.subjDer, 'visualization');
+    ensure_dir(outDir);
+
+    % 峰值坐标表
+    peaks = extract_peaks(tmap, mask, cfg.results.numPeaks);
+    writetable(peaks, fullfile(outDir, 'activation_peaks.csv'));
+
+    % 图1：多切面叠加热图
+    f1 = figure('Visible', 'off', 'Color', 'w', 'Position', [80 80 1400 900]);
+    tiledlayout(2, 2, 'Padding', 'compact', 'TileSpacing', 'compact');
+    show_overlay_slices(anat, tmap, mask, cfg.results);
+    exportgraphics(f1, fullfile(outDir, 'modern_slice_overlay.png'), 'Resolution', 300);
+    close(f1);
+
+    % 图2：3D 表面 + 激活团块
+    f2 = figure('Visible', 'off', 'Color', 'w', 'Position', [80 80 1400 900]);
+    show_3d_surfaces(anat, tmap, mask);
+    exportgraphics(f2, fullfile(outDir, 'modern_3d_surface.png'), 'Resolution', 300);
+    close(f2);
+
+    % 图3：体绘制（若可用）
+    if cfg.results.enableVolshow && exist('volshow', 'file') == 2
+        try
+            f3 = figure('Visible', 'off', 'Color', 'w', 'Position', [80 80 1400 900]);
+            volshow(abs(tmap) .* single(mask), 'BackgroundColor', [0 0 0], ...
+                'Colormap', turbo(256), 'Renderer', 'VolumeRendering');
+            exportgraphics(f3, fullfile(outDir, 'modern_volshow.png'), 'Resolution', 300);
+            close(f3);
+        catch
+            warning('volshow 导出失败，已跳过。');
+        end
+    end
+end
+
+% ============================== I/O 与工具函数 ============================
+function [V, info] = read_single_volume(inputDir, outDir)
+    ensure_dir(outDir);
+    nii = dir(fullfile(inputDir, '*.nii*'));
+    if ~isempty(nii)
+        p = fullfile(nii(1).folder, nii(1).name);
+        info = niftiinfo(p);
+        V = single(niftiread(info));
+        if ndims(V) == 4, V = V(:, :, :, 1); end
     else
-        matlabbatch{1}.spm.stats.fmri_spec.sess.multi_reg = {''};
+        dcm = dir(fullfile(inputDir, '**', '*.dcm'));
+        assert(~isempty(dcm), '结构像目录中无 NIfTI 或 DICOM。');
+        [V, info] = dicom_series_to_volume(dcm);
     end
-
-    matlabbatch{1}.spm.stats.fmri_spec.sess.hpf = cfg.firstLevel.hpf;
-    matlabbatch{1}.spm.stats.fmri_spec.fact = struct('name', {}, 'levels', {});
-    matlabbatch{1}.spm.stats.fmri_spec.bases.hrf.derivs = cfg.firstLevel.hrfDerivs;
-    matlabbatch{1}.spm.stats.fmri_spec.volt = 1;
-    matlabbatch{1}.spm.stats.fmri_spec.global = 'None';
-    matlabbatch{1}.spm.stats.fmri_spec.mthresh = 0.8;
-    matlabbatch{1}.spm.stats.fmri_spec.mask = {''};
-    matlabbatch{1}.spm.stats.fmri_spec.cvi = cfg.firstLevel.cvi;
-    spm_jobman('run', matlabbatch);
-
-    matlabbatch = [];
-    matlabbatch{1}.spm.stats.fmri_est.spmmat = {fullfile(firstLevelDir, 'SPM.mat')};
-    matlabbatch{1}.spm.stats.fmri_est.method.Classical = 1;
-    spm_jobman('run', matlabbatch);
-
-    matlabbatch = [];
-    matlabbatch{1}.spm.stats.con.spmmat = {fullfile(firstLevelDir, 'SPM.mat')};
-    matlabbatch{1}.spm.stats.con.delete = 1;
-    for i = 1:numel(cfg.firstLevel.contrasts)
-        matlabbatch{1}.spm.stats.con.consess{i}.tcon.name = cfg.firstLevel.contrasts(i).name;
-        matlabbatch{1}.spm.stats.con.consess{i}.tcon.weights = cfg.firstLevel.contrasts(i).weights;
-        matlabbatch{1}.spm.stats.con.consess{i}.tcon.sessrep = 'none';
-    end
-    spm_jobman('run', matlabbatch);
+    write_nifti_like(V, info, fullfile(outDir, 'anat_raw.nii'));
 end
 
-% ============================== 功能块 6 ================================
-% 统计阈值与立体视图标注激活区域
-function render_subject_results(info, cfg)
-    firstLevelDir = fullfile(info.subjWorkDir, 'first_level');
-    resultDir = fullfile(firstLevelDir, 'results');
-    ensure_dir(resultDir);
+function [runs, infos] = read_functional_runs(funcDir, outDir)
+    ensure_dir(outDir);
+    runs = {};
+    infos = {};
 
-    xSPM = struct();
-    xSPM.swd = firstLevelDir;
-    xSPM.Ic = cfg.results.contrastIndex;
-    xSPM.u = cfg.results.voxelPThreshold;
-    xSPM.k = cfg.results.clusterExtent;
-    xSPM.thresDesc = cfg.results.thresDesc;
-    xSPM.title = cfg.results.title;
-    xSPM.Im = [];
-    xSPM.pm = [];
-    xSPM.Ex = [];
-    xSPM.n = 1;
-
-    [xSPM, ~] = spm_getSPM(xSPM);
-    hReg = spm_results_ui('Setup', xSPM);
-    spm_list('List', xSPM, hReg);
-
-    % 导出阈值结果表（含显著峰 MNI 坐标）
-    [resultsTable, xSPM, hReg] = spm_list('Table', xSPM, hReg); %#ok<NASGU>
-    save(fullfile(resultDir, 'xSPM_thresholded.mat'), 'xSPM', 'resultsTable');
-
-    % 立体视图（Orthviews）并保存快照
-    spm_orthviews('Reset');
-    bg = cfg.results.backgroundImage;
-    if exist(bg, 'file') ~= 2
-        bg = fullfile(spm('Dir'), 'canonical', 'single_subj_T1.nii');
-    end
-    spm_orthviews('Image', bg, [0.05 0.05 0.9 0.9]);
-    spm_orthviews('AddColouredBlobs', 1, xSPM.XYZ, xSPM.Z, xSPM.M, [1 0 0]);
-    spm_orthviews('Redraw');
-
-    fig = spm_figure('FindWin', 'Graphics');
-    if ~isempty(fig)
-        exportgraphics(fig, fullfile(resultDir, 'orthview_activation.png'), 'Resolution', 300);
+    niiTop = dir(fullfile(funcDir, '*.nii*'));
+    if ~isempty(niiTop)
+        p = fullfile(niiTop(1).folder, niiTop(1).name);
+        info = niftiinfo(p);
+        V = single(niftiread(info));
+        assert(ndims(V) == 4, '功能像 NIfTI 必须为 4D。');
+        runs{1} = V; infos{1} = info; %#ok<AGROW>
+        write_nifti_4d(V, info, fullfile(outDir, 'run01_raw.nii'));
+        return;
     end
 
-    % 3D 渲染图（可选）
-    try
-        spm_render(xSPM.Z, xSPM.XYZ, fullfile(spm('Dir'), 'rend', 'render_single_subj.mat'));
-        fig = spm_figure('FindWin', 'Render');
-        if ~isempty(fig)
-            exportgraphics(fig, fullfile(resultDir, 'render_activation.png'), 'Resolution', 300);
-        end
-    catch
-        warning('3D 渲染失败，已保留正交视图与坐标表。');
-    end
-end
-
-% ============================== 工具函数 ================================
-function outPath = remove_first_volumes(inNii, nDrop, outDir)
-    V = spm_vol(inNii);
-    assert(numel(V) > nDrop, '文件 %s 的体积数不足以去除前 %d 个时间点。', inNii, nDrop);
-
-    Y = spm_read_vols(V);
-    Y = Y(:, :, :, (nDrop + 1):end);
-
-    outPath = fullfile(outDir, 'trimmed.nii');
-    Vo = V(1);
-    Vo.fname = outPath;
-    Vo.n = [1 1];
-    spm_write_vol(Vo, Y(:, :, :, 1));
-    for t = 2:size(Y, 4)
-        Vo.n = [t 1];
-        spm_write_vol(Vo, Y(:, :, :, t));
-    end
-end
-
-function outScans = run_slice_timing(runScans, cfg)
-    outScans = runScans;
-    for r = 1:numel(runScans)
-        matlabbatch = [];
-        matlabbatch{1}.spm.temporal.st.scans = {runScans{r}};
-        matlabbatch{1}.spm.temporal.st.nslices = cfg.preproc.nslices;
-        matlabbatch{1}.spm.temporal.st.tr = cfg.preproc.TR;
-        matlabbatch{1}.spm.temporal.st.ta = cfg.preproc.TR - cfg.preproc.TR / cfg.preproc.nslices;
-        matlabbatch{1}.spm.temporal.st.so = cfg.preproc.sliceOrder;
-        matlabbatch{1}.spm.temporal.st.refslice = cfg.preproc.refSlice;
-        matlabbatch{1}.spm.temporal.st.prefix = cfg.preproc.sliceTimingPrefix;
-        spm_jobman('run', matlabbatch);
-
-        p = fileparts(runScans{r}{1});
-        outScans{r} = cellstr(spm_select('ExtFPList', p, ...
-            ['^' regexptranslate('escape', cfg.preproc.sliceTimingPrefix) 'trimmed_.*\.nii$'], Inf));
-    end
-end
-
-function [outScans, meanFuncPath, motionParamFiles] = run_realign_estwrite(runScans, cfg)
-    allScans = vertcat(runScans{:});
-    allScans = to_scan_refs(allScans);
-
-    matlabbatch = [];
-    matlabbatch{1}.spm.spatial.realign.estwrite.data = {allScans};
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.quality = cfg.preproc.realign.quality;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.sep = cfg.preproc.realign.sep;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.fwhm = cfg.preproc.realign.fwhm;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.rtm = cfg.preproc.realign.rtm;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.interp = cfg.preproc.realign.interp;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.wrap = cfg.preproc.realign.wrap;
-    matlabbatch{1}.spm.spatial.realign.estwrite.eoptions.weight = '';
-    matlabbatch{1}.spm.spatial.realign.estwrite.roptions.which = cfg.preproc.realign.which;
-    matlabbatch{1}.spm.spatial.realign.estwrite.roptions.interp = cfg.preproc.realign.writeInterp;
-    matlabbatch{1}.spm.spatial.realign.estwrite.roptions.wrap = cfg.preproc.realign.wrap;
-    matlabbatch{1}.spm.spatial.realign.estwrite.roptions.mask = 1;
-    matlabbatch{1}.spm.spatial.realign.estwrite.roptions.prefix = cfg.preproc.realignPrefix;
-    spm_jobman('run', matlabbatch);
-
-    % 输出收集
-    outScans = runScans;
-    motionParamFiles = cell(numel(runScans), 1);
-    for r = 1:numel(runScans)
-        p = fileparts(runScans{r}{1});
-        outScans{r} = cellstr(spm_select('ExtFPList', p, ...
-            ['^' regexptranslate('escape', cfg.preproc.realignPrefix) ...
-            regexptranslate('escape', cfg.preproc.sliceTimingPrefix) 'trimmed_.*\.nii$'], Inf));
-        rp = cellstr(spm_select('FPList', p, '^rp_.*\.txt$'));
-        if ~isempty(rp)
-            motionParamFiles{r} = strtrim(rp{1});
+    d = dir(funcDir);
+    d = d([d.isdir]);
+    d = d(~startsWith({d.name}, '.'));
+    for i = 1:numel(d)
+        runDir = fullfile(funcDir, d(i).name);
+        nii = dir(fullfile(runDir, '*.nii*'));
+        if ~isempty(nii)
+            p = fullfile(nii(1).folder, nii(1).name);
+            info = niftiinfo(p);
+            V = single(niftiread(info));
+            assert(ndims(V) == 4, 'run %s 需为4D。', d(i).name);
         else
-            motionParamFiles{r} = '';
+            dcm = dir(fullfile(runDir, '**', '*.dcm'));
+            [V, info] = dicom_series_to_4d(dcm);
+        end
+        runs{end + 1} = V; %#ok<AGROW>
+        infos{end + 1} = info; %#ok<AGROW>
+        write_nifti_4d(V, info, fullfile(outDir, sprintf('run%02d_raw.nii', i)));
+    end
+end
+
+function V = drop_initial_volumes(V, n)
+    assert(size(V, 4) > n, '时间点不足以去除前 %d 个。', n);
+    V = V(:, :, :, n+1:end);
+end
+
+function Vout = slice_timing_correction(Vin, P)
+    nx = size(Vin,1); ny = size(Vin,2); nz = size(Vin,3); nt = size(Vin,4);
+    t = (0:nt-1) * P.TR;
+    dt = P.TR / P.nslices;
+    shifts = zeros(1, nz);
+    for z = 1:nz
+        ord = find(P.sliceOrder == z, 1, 'first');
+        shifts(z) = (ord - find(P.sliceOrder == P.refSlice, 1, 'first')) * dt;
+    end
+
+    Vout = zeros(size(Vin), 'single');
+    for z = 1:nz
+        tq = t + shifts(z);
+        tq = min(max(tq, t(1)), t(end));
+        for x = 1:nx
+            for y = 1:ny
+                s = squeeze(Vin(x, y, z, :));
+                Vout(x, y, z, :) = interp1(t, s, tq, 'pchip', 'extrap');
+            end
         end
     end
-
-    firstRunDir = fileparts(runScans{1}{1});
-    meanImg = cellstr(spm_select('FPList', firstRunDir, '^mean.*\.nii$'));
-    assert(~isempty(meanImg), '未找到重对齐均值图像 mean*.nii。');
-    meanFuncPath = strtrim(meanImg{1});
 end
 
-function coregAnat = run_coregister_estwrite(anatNii, meanFuncPath, cfg)
-    matlabbatch = [];
-    matlabbatch{1}.spm.spatial.coreg.estwrite.ref = {to_scan_ref(meanFuncPath)};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.source = {to_scan_ref(anatNii)};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.other = {''};
-    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.cost_fun = cfg.preproc.coreg.cost_fun;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.sep = cfg.preproc.coreg.sep;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.tol = cfg.preproc.coreg.tol;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.eoptions.fwhm = cfg.preproc.coreg.fwhm;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.interp = cfg.preproc.coreg.interp;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.wrap = [0 0 0];
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.mask = 0;
-    matlabbatch{1}.spm.spatial.coreg.estwrite.roptions.prefix = cfg.preproc.coregPrefix;
-    spm_jobman('run', matlabbatch);
+function [Vout, motion] = realign_4d(Vin, P)
+    nt = size(Vin, 4);
+    ref = Vin(:, :, :, 1);
+    Rfixed = imref3d(size(ref));
+    optimizer = registration.optimizer.OnePlusOneEvolutionary();
+    optimizer.InitialRadius = 6.25e-3;
+    metric = registration.metric.MeanSquares();
 
-    [p, n, e] = fileparts(anatNii);
-    coregAnat = fullfile(p, [cfg.preproc.coregPrefix n e]);
-    assert(exist(coregAnat, 'file') == 2, '配准输出不存在：%s', coregAnat);
+    Vout = zeros(size(Vin), 'single');
+    motion = zeros(nt, 6, 'single'); % tx ty tz rx ry rz (approx)
+    Vout(:, :, :, 1) = ref;
+
+    for t = 2:nt
+        moving = Vin(:, :, :, t);
+        tform = imregtform(moving, ref, 'rigid', optimizer, metric, ...
+            'PyramidLevels', P.realignPyramidLevels);
+        Vout(:, :, :, t) = imwarp(moving, tform, 'OutputView', Rfixed, ...
+            'InterpolationMethod', 'cubic');
+        motion(t, :) = affine_to_6dof(tform.A);
+    end
 end
 
-function [rc1, rc2, flowField] = run_new_segment(coregAnat, cfg)
-    tpm = fullfile(spm('Dir'), 'tpm', 'TPM.nii');
-    assert(exist(tpm, 'file') == 2, '未找到 TPM 文件：%s', tpm);
+function [anatReg, tform] = coregister_anat_to_func(anat, meanFunc, P)
+    Rfixed = imref3d(size(meanFunc));
+    optimizer = registration.optimizer.OnePlusOneEvolutionary();
+    optimizer.InitialRadius = 6.25e-3;
+    metric = registration.metric.MattesMutualInformation();
+    tform = imregtform(anat, meanFunc, 'rigid', optimizer, metric, ...
+        'PyramidLevels', P.coregPyramidLevels);
+    anatReg = imwarp(anat, tform, 'OutputView', Rfixed, 'InterpolationMethod', 'cubic');
+end
 
-    matlabbatch = [];
-    matlabbatch{1}.spm.spatial.preproc.channel.vols = {to_scan_ref(coregAnat)};
-    matlabbatch{1}.spm.spatial.preproc.channel.biasreg = cfg.preproc.segment.biasreg;
-    matlabbatch{1}.spm.spatial.preproc.channel.biasfwhm = cfg.preproc.segment.biasfwhm;
-    matlabbatch{1}.spm.spatial.preproc.channel.write = [0 1];
+function seg = segment_t1(anat, P)
+    anat = single(anat);
+    anat = anat - min(anat(:));
+    anat = anat / max(eps, max(anat(:)));
 
-    for k = 1:6
-        matlabbatch{1}.spm.spatial.preproc.tissue(k).tpm = {[tpm ',' num2str(k)]};
-        matlabbatch{1}.spm.spatial.preproc.tissue(k).ngaus = cfg.preproc.segment.ngaus(k);
-        matlabbatch{1}.spm.spatial.preproc.tissue(k).native = cfg.preproc.segment.native{k};
-        matlabbatch{1}.spm.spatial.preproc.tissue(k).warped = [0 0];
+    % 低频 bias 场校正（近似）
+    bias = imgaussfilt3(anat, P.biasFieldSigma);
+    anatCorr = anat ./ max(bias, eps('single'));
+    anatCorr = anatCorr / max(eps, max(anatCorr(:)));
+
+    % 3类 GMM 近似（用 kmeans 初始化）
+    x = anatCorr(:);
+    x = x(isfinite(x));
+    [idx, c] = kmeans(x, 3, 'Replicates', 5, 'MaxIter', 200);
+    [~, order] = sort(c, 'ascend'); %#ok<ASGLU>
+    mu = zeros(3,1); sd = zeros(3,1);
+    for k = 1:3
+        v = x(idx==order(k));
+        mu(k) = mean(v); sd(k) = std(v) + 1e-4;
     end
 
-    matlabbatch{1}.spm.spatial.preproc.warp.mrf = cfg.preproc.segment.warp.mrf;
-    matlabbatch{1}.spm.spatial.preproc.warp.cleanup = cfg.preproc.segment.warp.cleanup;
-    matlabbatch{1}.spm.spatial.preproc.warp.reg = cfg.preproc.segment.warp.reg;
-    matlabbatch{1}.spm.spatial.preproc.warp.affreg = cfg.preproc.segment.warp.affreg;
-    matlabbatch{1}.spm.spatial.preproc.warp.fwhm = cfg.preproc.segment.warp.fwhm;
-    matlabbatch{1}.spm.spatial.preproc.warp.samp = cfg.preproc.segment.warp.samp;
-    matlabbatch{1}.spm.spatial.preproc.warp.write = [1 1];
-    spm_jobman('run', matlabbatch);
+    p1 = normpdf(anatCorr, mu(1), sd(1));
+    p2 = normpdf(anatCorr, mu(2), sd(2));
+    p3 = normpdf(anatCorr, mu(3), sd(3));
+    ps = p1 + p2 + p3 + eps('single');
+    p1 = p1 ./ ps; p2 = p2 ./ ps; p3 = p3 ./ ps;
 
-    [p, n, e] = fileparts(coregAnat);
-    rc1 = fullfile(p, ['rc1' n e]);
-    rc2 = fullfile(p, ['rc2' n e]);
-    flowField = fullfile(p, ['u_' n e]);
-    assert(exist(rc1, 'file') == 2 && exist(rc2, 'file') == 2 && exist(flowField, 'file') == 2, ...
-        '分割输出不完整，请检查 New Segment 结果。');
+    % 经验映射：低灰度=CSF，中灰度=GM，高灰度=WM
+    seg.csf = p1;
+    seg.gm = p2;
+    seg.wm = p3;
 end
 
-function concat_motion_params(inFiles, outFile)
-    chunks = cell(numel(inFiles), 1);
-    keep = false(numel(inFiles), 1);
-    for i = 1:numel(inFiles)
-        if exist(inFiles{i}, 'file') ~= 2
-            continue;
+function Xtask = build_task_regressors(names, onsets, durations, T, P)
+    t = (0:T-1)' * P.TR;
+    h = canonical_hrf(P.TR, P.hrf);
+    Xtask = zeros(T, numel(names));
+    for i = 1:numel(names)
+        u = zeros(T, 1);
+        on = onsets{i};
+        du = durations{i};
+        if isscalar(du), du = repmat(du, size(on)); end
+        for k = 1:numel(on)
+            u = u + double(t >= on(k) & t < (on(k) + du(k)));
         end
-        chunks{i} = load(inFiles{i});
-        keep(i) = true;
+        xc = conv(u, h);
+        Xtask(:, i) = xc(1:T);
     end
-    if any(keep)
-        allM = vertcat(chunks{keep});
-    else
-        allM = [];
-    end
-    writematrix(allM, outFile, 'Delimiter', 'tab');
 end
 
-function pathOut = locate_first_existing(baseDir, candidates)
-    pathOut = '';
-    for i = 1:numel(candidates)
-        p = fullfile(baseDir, candidates{i});
-        if exist(p, 'dir') == 7
-            pathOut = p;
+function Xn = build_nuisance_regressors(motion, T, P)
+    m = motion;
+    if size(m,1) ~= T
+        if size(m,1) > T
+            m = m(1:T, :);
+        else
+            m = [m; zeros(T-size(m,1), size(m,2), 'like', m)];
+        end
+    end
+    d = [zeros(1, size(m,2)); diff(m,1,1)];
+    Xn = [m, d];
+
+    if P.addQuadraticMotion
+        Xn = [Xn, m.^2, d.^2];
+    end
+
+    if P.addLinearTrend
+        Xn = [Xn, linspace(-1,1,T)'];
+    end
+end
+
+function h = canonical_hrf(TR, H)
+    t = (0:TR:H.length)';
+    g1 = gampdf(t, H.p1, H.d1);
+    g2 = gampdf(t, H.p2, H.d2);
+    h = g1 - g2 / H.ratio;
+    h = h / max(eps, sum(h));
+end
+
+function [Yf, Xf] = highpass_dct(Y, X, hpfSec, TR)
+    T = size(X,1);
+    n = floor(2 * (T * TR) / hpfSec + 1);
+    C = zeros(T, n);
+    for k = 1:n
+        C(:, k) = cos((0:T-1)' * k * pi / T);
+    end
+    R = eye(T) - C * ((C' * C) \ C');
+    Yf = R * Y;
+    Xf = R * X;
+end
+
+function rho = estimate_global_ar1(Y)
+    y = mean(Y, 2, 'omitnan');
+    y1 = y(2:end); y0 = y(1:end-1);
+    rho = (y0' * y1) / max(eps, (y0' * y0));
+    rho = max(min(rho, 0.9), -0.9);
+end
+
+function [Yw, Xw] = ar1_prewhiten(Y, X, rho)
+    Yw = Y(2:end, :) - rho * Y(1:end-1, :);
+    Xw = X(2:end, :) - rho * X(1:end-1, :);
+end
+
+function mask = threshold_tmap(tmap, dof, pVoxel, kExtent)
+    tThr = tinv(1 - pVoxel, dof);
+    mask = abs(tmap) > tThr;
+    CC = bwconncomp(mask, 26);
+    keep = false(size(mask));
+    for i = 1:CC.NumObjects
+        idx = CC.PixelIdxList{i};
+        if numel(idx) >= kExtent
+            keep(idx) = true;
+        end
+    end
+    mask = keep;
+end
+
+function tbl = extract_peaks(tmap, mask, nPeaks)
+    z = tmap;
+    z(~mask) = -inf;
+    [vals, idx] = maxk(z(:), nPeaks);
+    [x, y, zc] = ind2sub(size(tmap), idx);
+    tbl = table((1:numel(vals))', vals, x, y, zc, ...
+        'VariableNames', {'Rank','TValue','I','J','K'});
+end
+
+function show_overlay_slices(anat, tmap, mask, R)
+    idxX = round(size(anat,1) * [0.35 0.50]);
+    idxY = round(size(anat,2) * [0.45 0.60]);
+    idxZ = round(size(anat,3) * [0.35 0.50]);
+    cm = turbo(256);
+
+    nexttile(1); overlay_slice(squeeze(anat(idxX(1),:,:))', squeeze(tmap(idxX(1),:,:))', squeeze(mask(idxX(1),:,:))', cm, R);
+    title('Sagittal');
+    nexttile(2); overlay_slice(squeeze(anat(:,idxY(1),:))', squeeze(tmap(:,idxY(1),:))', squeeze(mask(:,idxY(1),:))', cm, R);
+    title('Coronal');
+    nexttile(3); overlay_slice(squeeze(anat(:,:,idxZ(1)))', squeeze(tmap(:,:,idxZ(1)))', squeeze(mask(:,:,idxZ(1)))', cm, R);
+    title('Axial');
+    nexttile(4); overlay_slice(squeeze(anat(:,:,idxZ(2)))', squeeze(tmap(:,:,idxZ(2)))', squeeze(mask(:,:,idxZ(2)))', cm, R);
+    title('Axial+');
+end
+
+function overlay_slice(bg, ov, m, cm, R)
+    imagesc(bg); axis image off; colormap(gca, gray); hold on;
+    alphaMap = zeros(size(m), 'single');
+    alphaMap(m>0) = R.overlayAlpha;
+    ovn = rescale(ov);
+    h = imagesc(ovn); colormap(gca, gray);
+    set(h, 'AlphaData', alphaMap);
+    hold off;
+    c = colorbar; c.Label.String = 'Activation intensity';
+    colormap(gca, cm);
+end
+
+function show_3d_surfaces(anat, tmap, mask)
+    p1 = patch(isosurface(smooth3(anat), 0.35));
+    p1.FaceColor = [0.75 0.75 0.8];
+    p1.EdgeColor = 'none';
+    p1.FaceAlpha = 0.18;
+    hold on;
+
+    act = abs(tmap) .* single(mask);
+    if any(act(:) > 0)
+        lv = prctile(act(act>0), 70);
+        p2 = patch(isosurface(smooth3(act), lv));
+        p2.FaceColor = [1 0.2 0.1];
+        p2.EdgeColor = 'none';
+        p2.FaceAlpha = 0.85;
+    end
+    camlight; camlight headlight; lighting gouraud;
+    axis image off; view(3);
+    title('3D cortical-like envelope + activation clusters');
+end
+
+function A6 = affine_to_6dof(A)
+    tx = A(4,1); ty = A(4,2); tz = A(4,3);
+    R = A(1:3,1:3);
+    ry = asin(-R(3,1));
+    rx = atan2(R(3,2), R(3,3));
+    rz = atan2(R(2,1), R(1,1));
+    A6 = single([tx ty tz rx ry rz]);
+end
+
+function X = zscore_cols(X)
+    mu = mean(X, 1, 'omitnan');
+    sd = std(X, 0, 1, 'omitnan');
+    sd(sd < eps) = 1;
+    X = (X - mu) ./ sd;
+end
+
+function sigma = fwhm_to_sigma(fwhmMM, voxMM)
+    sigma = (fwhmMM ./ max(voxMM, eps)) / 2.3548;
+end
+
+function p = locate_first_existing(baseDir, names)
+    p = '';
+    for i = 1:numel(names)
+        c = fullfile(baseDir, names{i});
+        if isfolder(c)
+            p = c;
             return;
         end
     end
 end
 
-function nii = ensure_single_nifti(inDir, outDir)
-    ensure_dir(outDir);
-    niiList = cellstr(spm_select('FPList', inDir, '.*\.nii$'));
-    if isempty(niiList)
-        nii = convert_dicom_dir_to_nifti(inDir, outDir, true);
-    else
-        nii = strtrim(niiList{1});
+function ensure_dir(p)
+    if ~isfolder(p)
+        mkdir(p);
     end
 end
 
-function runs = ensure_run_niftis(funcDir, outDir)
-    ensure_dir(outDir);
-    runs = {};
+function write_nifti_like(vol, refInfo, pathOut)
+    ensure_dir(fileparts(pathOut));
+    info = refInfo;
+    if isfield(info, 'Filename'), info = rmfield(info, 'Filename'); end
+    if isfield(info, 'Filemoddate'), info = rmfield(info, 'Filemoddate'); end
+    if isfield(info, 'Filesize'), info = rmfield(info, 'Filesize'); end
+    info.ImageSize = size(vol);
+    if numel(info.ImageSize)==2, info.ImageSize(3)=1; end
+    niftiwrite(single(vol), pathOut, info, 'Compressed', false);
+end
 
-    runFolders = dir(funcDir);
-    runFolders = runFolders([runFolders.isdir]);
-    runFolders = runFolders(~startsWith({runFolders.name}, '.'));
+function write_nifti_4d(vol4d, refInfo, pathOut)
+    ensure_dir(fileparts(pathOut));
+    info = refInfo;
+    if isfield(info, 'Filename'), info = rmfield(info, 'Filename'); end
+    if isfield(info, 'Filemoddate'), info = rmfield(info, 'Filemoddate'); end
+    if isfield(info, 'Filesize'), info = rmfield(info, 'Filesize'); end
+    info.ImageSize = size(vol4d);
+    niftiwrite(single(vol4d), pathOut, info, 'Compressed', false);
+end
 
-    % 情况 A：func 目录内直接是 NIfTI（单 run）
-    topNii = cellstr(spm_select('FPList', funcDir, '.*\.nii$'));
-    if ~isempty(topNii)
-        runs{1} = strtrim(topNii{1});
-        return;
+function [V, info] = dicom_series_to_volume(dcmList)
+    files = fullfile({dcmList.folder}, {dcmList.name});
+    z = zeros(numel(files), 1);
+    for i = 1:numel(files)
+        h = dicominfo(files{i});
+        if isfield(h, 'InstanceNumber'), z(i) = h.InstanceNumber; else, z(i)=i; end
+    end
+    [~, ord] = sort(z);
+    files = files(ord);
+    s = dicomread(files{1});
+    V = zeros([size(s), numel(files)], 'single');
+    for i = 1:numel(files), V(:,:,i) = single(dicomread(files{i})); end
+    info = niftiinfo_from_dicom(files{1}, size(V));
+end
+
+function [V4d, info] = dicom_series_to_4d(dcmList)
+    assert(~isempty(dcmList), 'DICOM 列表为空。');
+    files = fullfile({dcmList.folder}, {dcmList.name});
+    hdr = cell(numel(files), 1);
+    for i = 1:numel(files), hdr{i} = dicominfo(files{i}); end
+
+    inst = zeros(numel(files),1); time = zeros(numel(files),1);
+    for i = 1:numel(files)
+        h = hdr{i};
+        if isfield(h, 'InstanceNumber'), inst(i)=h.InstanceNumber; else, inst(i)=i; end
+        if isfield(h, 'TemporalPositionIdentifier'), time(i)=h.TemporalPositionIdentifier; else, time(i)=1; end
     end
 
-    % 情况 B：每个子目录一个 run（DICOM 或 NIfTI）
-    for r = 1:numel(runFolders)
-        rDir = fullfile(funcDir, runFolders(r).name);
-        rNii = cellstr(spm_select('FPList', rDir, '.*\.nii$'));
-        if ~isempty(rNii)
-            runs{end + 1} = strtrim(rNii{1}); %#ok<AGROW>
-        else
-            runOut = fullfile(outDir, sprintf('run%02d', r));
-            ensure_dir(runOut);
-            runs{end + 1} = convert_dicom_dir_to_nifti(rDir, runOut, false); %#ok<AGROW>
+    tVals = unique(time);
+    nT = numel(tVals);
+    idxT1 = find(time == tVals(1));
+    [~, ordZ] = sort(inst(idxT1));
+    nZ = numel(idxT1);
+    s = dicomread(files{idxT1(ordZ(1))});
+    V4d = zeros([size(s), nZ, nT], 'single');
+
+    for t = 1:nT
+        idx = find(time == tVals(t));
+        [~, o] = sort(inst(idx));
+        idx = idx(o);
+        for z = 1:nZ
+            V4d(:,:,z,t) = single(dicomread(files{idx(z)}));
         end
     end
+    info = niftiinfo_from_dicom(files{idxT1(ordZ(1))}, size(V4d));
 end
 
-function nii = convert_dicom_dir_to_nifti(dicomDir, outDir, singleOnly)
-    dcm = cellstr(spm_select('FPList', dicomDir, '.*\.(dcm|IMA)$'));
-    if isempty(dcm)
-        dcm = cellstr(spm_select('FPList', dicomDir, '.*$'));
-        dcm = dcm(cellfun(@(x) exist(strtrim(x), 'file') == 2, dcm));
-    end
-    assert(~isempty(dcm), '目录 %s 中未发现可转换 DICOM。', dicomDir);
-
-    hdr = spm_dicom_headers(char(dcm));
-    prev = pwd;
-    dirCleanup = onCleanup(@() cd(prev)); %#ok<NASGU>
-    cd(outDir);
-    spm_dicom_convert(hdr, 'all', 'flat', 'nii');
-    niiFiles = cellstr(spm_select('FPList', outDir, '.*\.nii$'));
-    assert(~isempty(niiFiles), 'DICOM 转 NIfTI 失败：%s', dicomDir);
-
-    if singleOnly
-        nii = strtrim(niiFiles{1});
+function info = niftiinfo_from_dicom(oneFile, imgSize)
+    h = dicominfo(oneFile);
+    info = struct();
+    info.ImageSize = imgSize;
+    info.Datatype = 'single';
+    info.SpaceUnits = 'Millimeter';
+    info.TimeUnits = 'Second';
+    if isfield(h,'PixelSpacing')
+        px = double(h.PixelSpacing(:)');
     else
-        % 如果输出多个3D文件，则合并为4D
-        if numel(niiFiles) == 1
-            nii = strtrim(niiFiles{1});
-        else
-            nii = fullfile(outDir, 'merged_run.nii');
-            spm_file_merge(char(niiFiles), nii);
-        end
+        px = [1 1];
     end
-end
-
-function ensure_dir(d)
-    if exist(d, 'dir') ~= 7
-        mkdir(d);
-    end
-end
-
-function out = to_scan_refs(in)
-    in = cellfun(@strtrim, in, 'UniformOutput', false);
-    out = cellfun(@to_scan_ref, in, 'UniformOutput', false);
-end
-
-function out = to_scan_ref(in)
-    if contains(in, ',')
-        out = in;
-    else
-        out = [in ',1'];
-    end
+    if isfield(h,'SliceThickness'), st = double(h.SliceThickness); else, st = 1; end
+    info.PixelDimensions = [px st 1];
 end
