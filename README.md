@@ -29,19 +29,7 @@ DataRaw/
       run2/ (可选) -> *.nii 或 DICOM
   Sub002/
     ...
-
-Onsets/
-  Sub001/
-    conditions.mat
-  Sub002/
-    conditions.mat
 ```
-
-`conditions.mat` 至少包含：
-
-- `names`：条件名 cell，例如 `{'ConditionA','ConditionB'}`
-- `onsets`：每个条件 onset（秒）cell
-- `durations`：每个条件持续时间（秒）cell
 
 ---
 
@@ -74,6 +62,14 @@ run_task_fmri_pipeline
 ```matlab
 ./task_fmri_pipeline_config.m
 ```
+
+一级模型（SPM 风格）关键参数已全部内置在配置中（不依赖外部条件文件）：
+
+- `cfg.firstLevel.timingUnits`（`'scans'` 或 `'secs'`）
+- `cfg.firstLevel.TR`
+- `cfg.firstLevel.microtimeResolution`（SPM `fmri_t`）
+- `cfg.firstLevel.microtimeOnset`（SPM `fmri_t0`）
+- `cfg.firstLevel.design.names/onsets/durations`
 
 中文 ctex PDF（如 `MRILAB3.pdf`）建议先提取文本再对照实现：
 

@@ -10,7 +10,6 @@ function cfg = task_fmri_pipeline_config()
     % ================================ 路径块 ================================
     cfg.paths.dataRawDir = fullfile(repoRoot, 'DataRaw');
     cfg.paths.derivativeDir = fullfile(repoRoot, 'Derivatives');
-    cfg.paths.onsetDir = fullfile(repoRoot, 'Onsets');
     cfg.paths.templateDir = fullfile(cfg.paths.derivativeDir, 'Template');
 
     % 输入目录候选（兼容 DPABI 习惯）
@@ -56,11 +55,19 @@ function cfg = task_fmri_pipeline_config()
     cfg.normalization.demonsSmoothing = 1.2;
 
     % ============================ 一级统计参数块 =============================
-    cfg.firstLevel.conditionFileName = 'conditions.mat';
     cfg.firstLevel.TR = cfg.preproc.TR;
     cfg.firstLevel.hpf = 128;                  % sec
     cfg.firstLevel.addQuadraticMotion = true;
     cfg.firstLevel.addLinearTrend = true;
+    cfg.firstLevel.timingUnits = 'scans';      % 与 SPM "Units for design" 对齐: 'scans' 或 'secs'
+    cfg.firstLevel.microtimeResolution = 16;   % SPM fmri_t
+    cfg.firstLevel.microtimeOnset = 8;         % SPM fmri_t0
+
+    % 设计矩阵条件：全部在代码中定义（不依赖外部 conditions.mat）
+    % 下述默认值参考你截图中的设置：1个条件 righthand，5个 onset，duration=15
+    cfg.firstLevel.design.names = {'righthand'};
+    cfg.firstLevel.design.onsets = {[0 30 60 90 120]};   % 若 timingUnits='scans'，单位为 scan index
+    cfg.firstLevel.design.durations = {15};              % 标量表示该条件所有 trial 共享同一时长
 
     % HRF 双Gamma参数
     cfg.firstLevel.hrf.p1 = 6;
@@ -70,8 +77,8 @@ function cfg = task_fmri_pipeline_config()
     cfg.firstLevel.hrf.ratio = 6;
     cfg.firstLevel.hrf.length = 32;
 
-    % 一级对比（示例：第1个条件 > 第2个条件）
-    cfg.firstLevel.contrastWeights = [1 -1];
+    % 一级对比（默认：righthand > baseline）
+    cfg.firstLevel.contrastWeights = 1;
 
     % ============================= 可视化参数块 ==============================
     cfg.results.voxelPThreshold = 0.001;

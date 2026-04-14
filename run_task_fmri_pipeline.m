@@ -174,18 +174,14 @@ end
 function glm = first_level_glm(subj, cfg)
     fprintf('[%s] first-level GLM...\n', subj.subjID);
 
-    condPath = fullfile(cfg.paths.onsetDir, subj.subjID, cfg.firstLevel.conditionFileName);
-    assert(exist(condPath, 'file') == 2, '缺少条件文件: %s', condPath);
-    C = load(condPath);
-    assert(isfield(C, 'names') && isfield(C, 'onsets') && isfield(C, 'durations'), ...
-        'conditions.mat must contain names/onsets/durations.');
+    C = resolve_first_level_design(subj.subjID, cfg.firstLevel);
 
     Y4d = subj.funcSmooth;
     T = size(Y4d, 4);
     Y = reshape(Y4d, [], T)';         % T x V
 
     % --- 构建设计矩阵 ---
-    Xtask = build_task_regressors(C.names, C.onsets, C.durations, T, cfg.firstLevel);
+    Xtask = build_task_regressors(C.names, C.onsetsSec, C.durationsSec, T, cfg.firstLevel);
     Xnuis = build_nuisance_regressors(subj.motion, T, cfg.firstLevel);
     X = [Xtask, Xnuis];
     X = zscore_cols(X);
@@ -230,6 +226,55 @@ function glm = first_level_glm(subj, cfg)
     glm.tmap = tmap3;
     glm.mask = mask;
     glm.outDir = outDir;
+end
+
+function C = resolve_first_level_design(subjID, P)
+    assert(isfield(P, 'design') && ~isempty(P.design), 'firstLevel.design 未配置。');
+    D = P.design;
+    assert(isfield(D, 'names') && isfield(D, 'onsets') && isfield(D, 'durations'), ...
+        'firstLevel.design 需要包含 names/onsets/durations。');
+
+    names = D.names;
+    onsets = D.onsets;
+    durations = D.durations;
+    assert(iscell(names) && iscell(onsets) && iscell(durations), ...
+        'firstLevel.design 中 names/onsets/durations 必须为 cell。');
+    assert(numel(names) == numel(onsets) && numel(names) == numel(durations), ...
+        'firstLevel.design 条件数不一致。');
+
+    units = 'secs';
+    if isfield(P, 'timingUnits') && ~isempty(P.timingUnits)
+        units = lower(string(P.timingUnits));
+    end
+    assert(any(units == ["secs","seconds","scans"]), ...
+        'timingUnits 必须为 ''secs'' 或 ''scans''。');
+
+    onsetsSec = cell(size(onsets));
+    durationsSec = cell(size(durations));
+    for i = 1:numel(names)
+        on = double(onsets{i}(:)');
+        du = double(durations{i}(:)');
+        assert(~isempty(on), '条件 %s 的 onsets 不能为空。', string(names{i}));
+        assert(~isempty(du), '条件 %s 的 durations 不能为空。', string(names{i}));
+        if isscalar(du)
+            du = repmat(du, size(on));
+        end
+        assert(numel(du) == numel(on), ...
+            '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', string(names{i}));
+
+        if units == "scans"
+            on = on * P.TR;
+            du = du * P.TR;
+        end
+
+        onsetsSec{i} = on;
+        durationsSec{i} = du;
+    end
+
+    C.subjID = subjID;
+    C.names = names;
+    C.onsetsSec = onsetsSec;
+    C.durationsSec = durationsSec;
 end
 
 % ============================== 现代可视化块 ==============================
@@ -461,20 +506,30 @@ function seg = segment_t1(anat, P)
     seg.wm = p3;
 end
 
-function Xtask = build_task_regressors(names, onsets, durations, T, P)
-    t = (0:T-1)' * P.TR;
-    h = canonical_hrf(P.TR, P.hrf);
+function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
+    assert(P.microtimeResolution >= 1 && mod(P.microtimeResolution, 1) == 0, ...
+        'microtimeResolution 必须为正整数。');
+    assert(P.microtimeOnset >= 1 && P.microtimeOnset <= P.microtimeResolution ...
+        && mod(P.microtimeOnset, 1) == 0, ...
+        'microtimeOnset 必须是 1..microtimeResolution 的整数。');
+    dt = P.TR / P.microtimeResolution;
+    nMicro = T * P.microtimeResolution;
+    tMicro = (0:nMicro-1)' * dt;
+    h = canonical_hrf(dt, P.hrf);
+    sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
+    sampleIdx = min(max(sampleIdx, 1), nMicro);
+
     Xtask = zeros(T, numel(names));
     for i = 1:numel(names)
-        u = zeros(T, 1);
-        on = onsets{i};
-        du = durations{i};
-        if isscalar(du), du = repmat(du, size(on)); end
+        uMicro = zeros(nMicro, 1);
+        on = onsetsSec{i};
+        du = durationsSec{i};
         for k = 1:numel(on)
-            u = u + double(t >= on(k) & t < (on(k) + du(k)));
+            uMicro = uMicro + double(tMicro >= on(k) & tMicro < (on(k) + du(k)));
         end
-        xc = conv(u, h);
-        Xtask(:, i) = xc(1:T);
+        xc = conv(uMicro, h);
+        xc = xc(1:nMicro);
+        Xtask(:, i) = xc(sampleIdx(:));
     end
 end
 
@@ -499,10 +554,10 @@ function Xn = build_nuisance_regressors(motion, T, P)
     end
 end
 
-function h = canonical_hrf(TR, H)
+function h = canonical_hrf(dt, H)
     % 双Gamma HRF:
     % p1/d1: 主峰 shape/scale; p2/d2: undershoot shape/scale; ratio: 相对幅值比
-    t = (0:TR:H.length)';
+    t = (0:dt:H.length)';
     g1 = gampdf(t, H.p1, H.d1);
     g2 = gampdf(t, H.p2, H.d2);
     h = g1 - g2 / H.ratio;
