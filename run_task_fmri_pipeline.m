@@ -56,8 +56,8 @@ end
 function out = preprocess_subject(subjID, cfg)
     fprintf('[%s] preprocess...\n', subjID);
 
-    useSplitRaw = isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir);
-    if useSplitRaw
+    hasSplitDataLayout = isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir);
+    if hasSplitDataLayout
         anatDir = resolve_subject_input_dir(cfg.paths.t1RawDir, subjID);
         funcDir = resolve_subject_input_dir(cfg.paths.funcRawDir, subjID);
     else
@@ -796,6 +796,11 @@ function p = locate_first_existing(baseDir, names)
     end
 end
 
+% LIST_SUBDIRS Return visible subdirectory names under baseDir.
+% Input:
+%   baseDir - parent directory path.
+% Output:
+%   names   - cell array of non-hidden subdirectory names.
 function names = list_subdirs(baseDir)
     names = {};
     if ~isfolder(baseDir)
@@ -807,6 +812,13 @@ function names = list_subdirs(baseDir)
     names = names(~startsWith(names, '.'));
 end
 
+% RESOLVE_SUBJECT_INPUT_DIR Resolve subject input directory under rootDir.
+% Input:
+%   rootDir - modality root (e.g., FunRaw or T1Raw).
+%   subjID  - subject folder name.
+% Output:
+%   p       - resolved directory path; if rootDir/subjID exists, use it;
+%             otherwise fall back to rootDir when data files are directly there.
 function p = resolve_subject_input_dir(rootDir, subjID)
     p = '';
     candidateSubj = fullfile(rootDir, subjID);
