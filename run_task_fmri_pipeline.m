@@ -292,8 +292,8 @@ function render_subject_results(info, cfg)
     spm_list('List', xSPM, hReg);
 
     % 导出阈值结果表（含显著峰 MNI 坐标）
-    [TabDat, xSPM, hReg] = spm_list('Table', xSPM, hReg); %#ok<NASGU,ASGLU>
-    save(fullfile(resultDir, 'xSPM_thresholded.mat'), 'xSPM', 'TabDat');
+    [resultsTable, xSPM, hReg] = spm_list('Table', xSPM, hReg); %#ok<NASGU,ASGLU>
+    save(fullfile(resultDir, 'xSPM_thresholded.mat'), 'xSPM', 'resultsTable');
 
     % 立体视图（Orthviews）并保存快照
     spm_orthviews('Reset');
@@ -457,15 +457,21 @@ function [rc1, rc2, flowField] = run_new_segment(coregAnat, cfg)
 end
 
 function concat_motion_params(inFiles, outFile)
-    allM = [];
+    chunks = cell(numel(inFiles), 1);
+    keep = false(numel(inFiles), 1);
     for i = 1:numel(inFiles)
         if exist(inFiles{i}, 'file') ~= 2
             continue;
         end
-        m = load(inFiles{i});
-        allM = [allM; m]; %#ok<AGROW>
+        chunks{i} = load(inFiles{i});
+        keep(i) = true;
     end
-    dlmwrite(outFile, allM, 'delimiter', '\t');
+    if any(keep)
+        allM = vertcat(chunks{keep});
+    else
+        allM = [];
+    end
+    writematrix(allM, outFile, 'Delimiter', 'tab');
 end
 
 function pathOut = locate_first_existing(baseDir, candidates)

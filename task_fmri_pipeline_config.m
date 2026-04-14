@@ -63,7 +63,7 @@ function cfg = task_fmri_pipeline_config()
     cfg.preproc.segment.warp.mrf = 1;
     cfg.preproc.segment.warp.cleanup = 1;
     cfg.preproc.segment.warp.reg = [0 0.001 0.5 0.05 0.2];
-    cfg.preproc.segment.warp.affreg = 'eastern';  % East Asian
+    cfg.preproc.segment.warp.affreg = 'eastern';  % Eastern Asian
     cfg.preproc.segment.warp.fwhm = 0;
     cfg.preproc.segment.warp.samp = 3;
 
