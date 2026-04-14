@@ -66,6 +66,7 @@ run_task_fmri_pipeline
 一级模型（SPM 风格）关键参数已全部内置在配置中（不依赖外部条件文件）：
 
 - `cfg.firstLevel.timingUnits`（`'scans'` 或 `'secs'`）
+- `cfg.firstLevel.scanOnsetIndexBase`（仅 `timingUnits='scans'`：0-based 或 1-based）
 - `cfg.firstLevel.TR`
 - `cfg.firstLevel.microtimeResolution`（SPM `fmri_t`）
 - `cfg.firstLevel.microtimeOnset`（SPM `fmri_t0`）

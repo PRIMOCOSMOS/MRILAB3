@@ -264,7 +264,15 @@ function C = resolve_first_level_design(subjID, P)
             '条件 %s 的 durations 若非标量，长度需与 onsets 一致。', condName);
 
         if strcmp(units, 'scans')
-            on = on * P.TR;
+            onsetBase = 0;
+            if isfield(P, 'scanOnsetIndexBase') && ~isempty(P.scanOnsetIndexBase)
+                onsetBase = double(P.scanOnsetIndexBase);
+            end
+            assert(any(onsetBase == [0 1]), ...
+                'scanOnsetIndexBase 必须为 0 或 1。');
+            assert(all(on >= onsetBase), ...
+                '存在小于 scanOnsetIndexBase 的 onset。');
+            on = (on - onsetBase) * P.TR;
             du = du * P.TR;
         end
 
@@ -517,6 +525,7 @@ function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
     nMicro = T * P.microtimeResolution;
     tMicro = (0:nMicro-1)' * dt;
     h = canonical_hrf(dt, P.hrf);
+    % tMicro 的索引1对应时间0，因此 fmri_t0 直接映射为每TR内的采样索引（1-based）
     sampleIdx = (0:T-1) * P.microtimeResolution + P.microtimeOnset;
     assert(all(sampleIdx >= 1 & sampleIdx <= nMicro), ...
         'microtimeOnset 产生了越界采样点，请检查 microtimeResolution/microtimeOnset。');

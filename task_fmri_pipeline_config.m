@@ -60,13 +60,14 @@ function cfg = task_fmri_pipeline_config()
     cfg.firstLevel.addQuadraticMotion = true;
     cfg.firstLevel.addLinearTrend = true;
     cfg.firstLevel.timingUnits = 'scans';      % 与 SPM "Units for design" 对齐: 'scans' 或 'secs'
+    cfg.firstLevel.scanOnsetIndexBase = 0;     % 仅 timingUnits='scans' 时生效：0(首体积=0) 或 1(首体积=1)
     cfg.firstLevel.microtimeResolution = 16;   % SPM fmri_t
     cfg.firstLevel.microtimeOnset = 8;         % SPM fmri_t0
 
     % 设计矩阵条件：全部在代码中定义（不依赖外部 conditions.mat）
     % 下述默认值参考你截图中的设置：1个条件 righthand，5个 onset，duration=15
     cfg.firstLevel.design.names = {'righthand'};
-    cfg.firstLevel.design.onsets = {[0 30 60 90 120]};   % 若 timingUnits='scans'，onset=0 表示第1个扫描起点（以扫描时间为单位）
+    cfg.firstLevel.design.onsets = {[0 30 60 90 120]};   % 若 timingUnits='scans'，按 scanOnsetIndexBase 解释
     cfg.firstLevel.design.durations = {15};              % 标量表示该条件所有 trial 共享同一时长
 
     % HRF 双Gamma参数
