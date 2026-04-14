@@ -67,7 +67,7 @@ function out = preprocess_subject(subjID, cfg)
     end
     subjDer = fullfile(cfg.paths.derivativeDir, subjID);
     ensure_dir(subjDer);
-    assert(~isempty(anatDir) && ~isempty(funcDir), '%s', sprintf('被试 %s 的原始结构像或功能像目录不完整。', subjID));
+    assert(~isempty(anatDir) && ~isempty(funcDir), '被试 %s 的原始结构像或功能像目录不完整。', subjID);
 
     % --- 读取并保存结构像 ---
     [anatVol, anatInfo] = read_single_volume(anatDir, fullfile(subjDer, 'anat'));
