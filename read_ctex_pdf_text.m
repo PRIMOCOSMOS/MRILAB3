@@ -9,7 +9,8 @@ function out = read_ctex_pdf_text(pdfPath, outTxtPath)
 % -------------------------------------------------------------------------
 
     if nargin < 1 || isempty(pdfPath)
-        pdfPath = '/home/runner/work/MRILAB3/MRILAB3/MRILAB3.pdf';
+        repoRoot = fileparts(mfilename('fullpath'));
+        pdfPath = fullfile(repoRoot, 'MRILAB3.pdf');
     end
     if nargin < 2
         outTxtPath = '';

@@ -357,7 +357,7 @@ function shiftsSec = resolve_slice_timing_shifts(P, nz)
         mode = lower(string(P.sliceTimingMode));
     end
 
-    if (mode == "timing_ms") || (isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs))
+    if mode == "timing_ms"
         assert(isfield(P, 'sliceTimingMs') && ~isempty(P.sliceTimingMs), ...
             'sliceTimingMode=timing_ms 时必须提供 sliceTimingMs。');
         stMs = double(P.sliceTimingMs(:)');
