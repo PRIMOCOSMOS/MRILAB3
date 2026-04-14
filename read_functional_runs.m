@@ -55,15 +55,19 @@ function [Vbest, infoBest] = select_best_top_level_nifti(niiList)
         p = fullfile(niiList(i).folder, niiList(i).name);
         info = niftiinfo(p);
         V = single(niftiread(info));
-        if ndims(V) == 3
+        dims = ndims(V);
+        if dims == 3
             % 统一到 4D 形状，便于后续候选比较（单体积视作 nt=1）。
             V = reshape(V, size(V, 1), size(V, 2), size(V, 3), 1);
-        end
-        if ndims(V) ~= 4
+        elseif dims ~= 4
             continue;
         end
         % 评分优先级：先强偏好真实多切片数据，再按时间点数，最后按切片数细分。
-        score = double(size(V, 3) > 1) * 1e9 + double(size(V, 4)) * 1e4 + double(size(V, 3));
+        weightMultiSlice = 1e9;
+        weightTimePoints = 1e4;
+        score = double(size(V, 3) > 1) * weightMultiSlice ...
+              + double(size(V, 4)) * weightTimePoints ...
+              + double(size(V, 3));
         if score > bestScore
             Vbest = V;
             infoBest = info;
