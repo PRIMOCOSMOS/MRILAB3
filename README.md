@@ -15,6 +15,11 @@
 - `./task_fmri_pipeline_config.m`
 - `./read_ctex_pdf_text.m`
 
+兼容性补充（开箱即用）：
+- 脚本写 NIfTI 时会自动过滤不同 MATLAB 版本中 `niftiwrite` 不识别的元数据字段（如 `Description`），避免因头信息字段差异直接报错；
+- 如需完全复现 README 中默认参数与图形表现，建议使用 MATLAB 2025a；
+- 若使用其他版本 MATLAB，无需额外手工配置即可运行本流程，但可视化与个别数值细节可能存在轻微版本差异。
+
 ---
 
 ## 数据目录（当前默认读取方式）

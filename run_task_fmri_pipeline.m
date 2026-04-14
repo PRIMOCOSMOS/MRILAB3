@@ -844,10 +844,7 @@ end
 
 function write_nifti_like(vol, refInfo, pathOut)
     ensure_dir(fileparts(pathOut));
-    info = refInfo;
-    if isfield(info, 'Filename'), info = rmfield(info, 'Filename'); end
-    if isfield(info, 'Filemoddate'), info = rmfield(info, 'Filemoddate'); end
-    if isfield(info, 'Filesize'), info = rmfield(info, 'Filesize'); end
+    info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol);
     if numel(info.ImageSize)==2, info.ImageSize(3)=1; end
     niftiwrite(single(vol), pathOut, info, 'Compressed', false);
@@ -855,12 +852,25 @@ end
 
 function write_nifti_4d(vol4d, refInfo, pathOut)
     ensure_dir(fileparts(pathOut));
-    info = refInfo;
-    if isfield(info, 'Filename'), info = rmfield(info, 'Filename'); end
-    if isfield(info, 'Filemoddate'), info = rmfield(info, 'Filemoddate'); end
-    if isfield(info, 'Filesize'), info = rmfield(info, 'Filesize'); end
+    info = sanitize_nifti_info_for_write(refInfo);
     info.ImageSize = size(vol4d);
     niftiwrite(single(vol4d), pathOut, info, 'Compressed', false);
+end
+
+function infoOut = sanitize_nifti_info_for_write(infoIn)
+    infoOut = struct();
+    if ~isstruct(infoIn)
+        return;
+    end
+    % 仅保留 niftiwrite 可识别的通用字段，避免版本差异导致的字段报错（如 Description）。
+    keep = {'ImageSize','PixelDimensions','Datatype','SpaceUnits','TimeUnits', ...
+            'AdditiveOffset','MultiplicativeScaling','Transform','Qfactor'};
+    for i = 1:numel(keep)
+        k = keep{i};
+        if isfield(infoIn, k)
+            infoOut.(k) = infoIn.(k);
+        end
+    end
 end
 
 function [V, info] = dicom_series_to_volume(dcmList)
