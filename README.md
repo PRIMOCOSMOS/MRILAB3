@@ -63,7 +63,7 @@ BOLDDATA/
 11. 现代可视化导出（2D/3D/体绘制）
 
 模板逻辑（standalone，不调用 SPM/DPABI API）：
-- 分割先验模板：GM/WM/CSF 的 TPM（默认体积索引 `[1 2 3]`，按 `[GM WM CSF]` 提取并与对应组织概率直接融合）
+- 分割先验模板：GM/WM/CSF 的 TPM（默认体积索引 `[1 2 3]`，即 `1→GM, 2→WM, 3→CSF`，并与对应组织概率直接融合）
 - 群体模板：由本数据集 T1 在仓库内迭代构建（`Derivatives/Template/group_template.nii`）
 - 标准空间目标模板（可选）：自动/手动指定 MNI 类模板后，执行“群体模板 -> 目标模板”二段映射
 - East Asian 优先：自动发现多个 TPM 候选时，优先匹配 East Asian/Chinese 相关命名

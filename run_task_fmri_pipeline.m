@@ -606,6 +606,7 @@ function [V, info] = read_template_volume(pathIn)
     info = niftiinfo(pathIn);
     V = single(niftiread(info));
     if ndims(V) == 4
+        % 目标标准空间模板通常为 3D 参考体；若是 4D 文件，默认取首个体积作为空间参考。
         V = V(:, :, :, 1);
     end
 end
@@ -627,7 +628,7 @@ function pri = load_segmentation_priors(anatSize, segTpl)
         end
         idx = double(segTpl.tpmVolumeIndices(:)');
         assert(numel(idx) == 3 && all(idx >= 1) && all(mod(idx, 1) == 0) && all(idx <= size(tpm, 4)), ...
-            'tpmVolumeIndices 非法：当前值=%s；要求=长度为3的正整数，且每个索引在 [1, %d] 范围内。', ...
+            'cfg.templates.segmentation.tpmVolumeIndices 非法：当前值=%s；要求=长度为3的正整数，且每个索引在 [1, %d] 范围内。', ...
             mat2str(idx), size(tpm, 4));
         gm = imresize3(tpm(:, :, :, idx(1)), anatSize, 'linear');
         wm = imresize3(tpm(:, :, :, idx(2)), anatSize, 'linear');
@@ -807,6 +808,7 @@ function seg = segment_t1(anat, P, segTpl)
     % 可选：融合模板先验（TPM），提升组织概率图稳定性
     pri = load_segmentation_priors(size(anatCorr), segTpl);
     if pri.available
+        % 将 priorWeight 限制在 [0,1]，确保“强度似然/模板先验”线性融合始终稳定。
         w = min(max(double(segTpl.priorWeight), 0), 1);
         seg.csf = (1 - w) * seg.csf + w * pri.csf;
         seg.gm = (1 - w) * seg.gm + w * pri.gm;
