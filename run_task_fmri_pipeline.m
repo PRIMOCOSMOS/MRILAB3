@@ -627,7 +627,8 @@ function pri = load_segmentation_priors(anatSize, segTpl)
         end
         idx = double(segTpl.tpmVolumeIndices(:)');
         assert(numel(idx) == 3 && all(idx >= 1) && all(mod(idx, 1) == 0) && all(idx <= size(tpm, 4)), ...
-            'tpmVolumeIndices 必须是长度为3的正整数，且每个索引在 [1, %d] 范围内。', size(tpm, 4));
+            'tpmVolumeIndices 非法：当前值=%s；要求=长度为3的正整数，且每个索引在 [1, %d] 范围内。', ...
+            mat2str(idx), size(tpm, 4));
         gm = imresize3(tpm(:, :, :, idx(1)), anatSize, 'linear');
         wm = imresize3(tpm(:, :, :, idx(2)), anatSize, 'linear');
         csf = imresize3(tpm(:, :, :, idx(3)), anatSize, 'linear');
@@ -638,7 +639,7 @@ function pri = load_segmentation_priors(anatSize, segTpl)
         pri.csf = csf ./ ps;
         pri.available = true;
     catch ME
-        warning('加载 TPM 先验失败（已回退强度分割）：%s', ME.message);
+        warning('加载 TPM 先验失败（文件: %s，已回退强度分割）：%s', segTpl.tpmPath, ME.message);
     end
 end
 
