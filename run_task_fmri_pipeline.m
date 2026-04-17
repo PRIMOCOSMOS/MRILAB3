@@ -558,6 +558,8 @@ function files = discover_nifti_templates(searchDirs)
 end
 
 function bestPath = select_best_template(files, mustContain, preferSpecial, specialKeywords)
+    specialBoostPreferred = 5;  % 开启偏好时，显著提升特定关键词（如 East/MNI）候选得分
+    specialBoostDefault = 1;    % 未开启偏好时，仍保留轻微加分，避免同分情况下完全忽略
     bestPath = '';
     bestScore = -inf;
     for i = 1:numel(files)
@@ -587,7 +589,11 @@ function bestPath = select_best_template(files, mustContain, preferSpecial, spec
             end
         end
         if specialHit
-            score = score + (4 * double(preferSpecial) + 1);
+            if preferSpecial
+                score = score + specialBoostPreferred;
+            else
+                score = score + specialBoostDefault;
+            end
         end
         if score > bestScore
             bestScore = score;
@@ -621,7 +627,7 @@ function pri = load_segmentation_priors(anatSize, segTpl)
         end
         idx = double(segTpl.tpmVolumeIndices(:)');
         assert(numel(idx) == 3 && all(idx >= 1) && all(mod(idx, 1) == 0) && all(idx <= size(tpm, 4)), ...
-            'tpmVolumeIndices 非法。');
+            'tpmVolumeIndices 必须是长度为3的正整数，且每个索引在 [1, %d] 范围内。', size(tpm, 4));
         gm = imresize3(tpm(:, :, :, idx(1)), anatSize, 'linear');
         wm = imresize3(tpm(:, :, :, idx(2)), anatSize, 'linear');
         csf = imresize3(tpm(:, :, :, idx(3)), anatSize, 'linear');
