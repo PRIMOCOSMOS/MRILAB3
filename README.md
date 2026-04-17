@@ -79,18 +79,6 @@ BOLDDATA/
 run_task_fmri_pipeline
 ```
 
-通过 Python `matlab.engine` 测试（推荐先 smoke）：
-
-```bash
-python /absolute/path/to/MRILAB3/test_pipeline_with_matlab_engine.py --mode smoke
-python /absolute/path/to/MRILAB3/test_pipeline_with_matlab_engine.py --mode full
-```
-
-说明：
-- `smoke`：启动 MATLAB、加载仓库路径、读取 `task_fmri_pipeline_config` 并打印模板配置；
-- `full`：直接执行 `run_task_fmri_pipeline` 全流程；
-- 若缺少 `matlab.engine`，请在 MATLAB 安装目录执行 Python 引擎安装（`<matlabroot>/extern/engines/python`）。
-
 参数修改位置：
 
 ```matlab
