@@ -79,6 +79,18 @@ BOLDDATA/
 run_task_fmri_pipeline
 ```
 
+通过 Python `matlab.engine` 测试（推荐先 smoke）：
+
+```bash
+python /absolute/path/to/MRILAB3/test_pipeline_with_matlab_engine.py --mode smoke
+python /absolute/path/to/MRILAB3/test_pipeline_with_matlab_engine.py --mode full
+```
+
+说明：
+- `smoke`：启动 MATLAB、加载仓库路径、读取 `task_fmri_pipeline_config` 并打印模板配置；
+- `full`：直接执行 `run_task_fmri_pipeline` 全流程；
+- 若缺少 `matlab.engine`，请在 MATLAB 安装目录执行 Python 引擎安装（`<matlabroot>/extern/engines/python`）。
+
 参数修改位置：
 
 ```matlab
@@ -106,12 +118,19 @@ DPABI 预处理步骤（白盒映射）也全部内置在配置中，并可逐�
 
 模板管理关键参数（`task_fmri_pipeline_config.m`）：
 - `cfg.templates.searchDirs`
+- `cfg.templates.installRoots`
+- `cfg.templates.installRootEnvVars`
 - `cfg.templates.segmentation.tpmPath`
 - `cfg.templates.segmentation.tpmVolumeIndices`
 - `cfg.templates.segmentation.preferEastAsian`
 - `cfg.templates.segmentation.priorWeight`
 - `cfg.templates.normalize.targetTemplatePath`
 - `cfg.templates.normalize.preferMNI`
+
+模板路径推断（适配 SPM/DPABI 常见组织）：
+- 默认外部安装根目录：`D:\spm`、`D:\DPABI_V9.0_250415\DPARSF`
+- 会自动扩展搜索常见子目录：`tpm`、`canonical`、`Templates` 以及上级目录中的 `Templates`
+- 支持环境变量覆盖：`SPM_DIR`、`DPABI_DIR`、`DPARSF_DIR`
 
 中文 ctex PDF（如 `MRILAB3.pdf`）建议先提取文本再对照实现：
 

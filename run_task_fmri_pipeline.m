@@ -467,7 +467,8 @@ function tplCtx = resolve_template_context(cfg)
     end
 
     Tc = cfg.templates;
-    candidateFiles = discover_nifti_templates(Tc.searchDirs);
+    searchDirs = build_template_search_dirs(Tc);
+    candidateFiles = discover_nifti_templates(searchDirs);
 
     % ---- segmentation priors (TPM) ----
     if isfield(Tc, 'segmentation') && Tc.segmentation.enabled
@@ -533,6 +534,79 @@ function tf = logical_if_exists(S, fieldName)
     end
 end
 
+function searchDirs = build_template_search_dirs(Tc)
+    searchDirs = {};
+    if isfield(Tc, 'searchDirs') && ~isempty(Tc.searchDirs)
+        searchDirs = [searchDirs, Tc.searchDirs];
+    end
+
+    installRoots = {};
+    if isfield(Tc, 'installRoots') && ~isempty(Tc.installRoots)
+        installRoots = [installRoots, Tc.installRoots];
+    end
+
+    if isfield(Tc, 'installRootEnvVars') && ~isempty(Tc.installRootEnvVars)
+        for i = 1:numel(Tc.installRootEnvVars)
+            envName = Tc.installRootEnvVars{i};
+            envVal = getenv(envName);
+            if isempty(envVal)
+                continue;
+            end
+            parts = split_string_by_pathsep(envVal);
+            installRoots = [installRoots, parts]; %#ok<AGROW>
+        end
+    end
+
+    for i = 1:numel(installRoots)
+        root = installRoots{i};
+        inferred = infer_template_dirs_from_install_root(root);
+        searchDirs = [searchDirs, inferred]; %#ok<AGROW>
+    end
+
+    searchDirs = unique(cellfun(@char, searchDirs, 'UniformOutput', false));
+end
+
+function parts = split_string_by_pathsep(s)
+    parts = {};
+    if isempty(s)
+        return;
+    end
+    t = strsplit(char(s), pathsep);
+    t = t(~cellfun(@isempty, t));
+    parts = t;
+end
+
+function dirs = infer_template_dirs_from_install_root(root)
+    dirs = {};
+    if ~(ischar(root) || isstring(root))
+        return;
+    end
+    root = char(root);
+    if isempty(root)
+        return;
+    end
+
+    dirs{end+1} = root; %#ok<AGROW>
+    dirs{end+1} = fullfile(root, 'Templates'); %#ok<AGROW>
+    dirs{end+1} = fullfile(root, 'templates'); %#ok<AGROW>
+    dirs{end+1} = fullfile(root, 'tpm'); %#ok<AGROW>
+    dirs{end+1} = fullfile(root, 'canonical'); %#ok<AGROW>
+
+    p1 = fileparts(root);
+    if ~isempty(p1)
+        dirs{end+1} = p1; %#ok<AGROW>
+        dirs{end+1} = fullfile(p1, 'Templates'); %#ok<AGROW>
+        dirs{end+1} = fullfile(p1, 'templates'); %#ok<AGROW>
+        dirs{end+1} = fullfile(p1, 'tpm'); %#ok<AGROW>
+        dirs{end+1} = fullfile(p1, 'canonical'); %#ok<AGROW>
+        p2 = fileparts(p1);
+        if ~isempty(p2) && ~strcmp(p2, p1)
+            dirs{end+1} = fullfile(p2, 'Templates'); %#ok<AGROW>
+            dirs{end+1} = fullfile(p2, 'templates'); %#ok<AGROW>
+        end
+    end
+end
+
 function files = discover_nifti_templates(searchDirs)
     files = {};
     if isempty(searchDirs)
@@ -563,7 +637,9 @@ function bestPath = select_best_template(files, mustContain, preferSpecial, spec
     bestPath = '';
     bestScore = -inf;
     for i = 1:numel(files)
-        p = lower(files{i});
+        pRaw = files{i};
+        p = lower(pRaw);
+        pNorm = strrep(p, '\', '/');
         hitAny = false;
         for j = 1:numel(mustContain)
             if contains(p, lower(mustContain{j}))
@@ -580,6 +656,11 @@ function bestPath = select_best_template(files, mustContain, preferSpecial, spec
         end
         if contains(p, 'template'), score = score + 2; end
         if contains(p, '152'), score = score + 1; end
+        if contains(pNorm, '/tpm/'), score = score + 5; end
+        if contains(pNorm, '/canonical/'), score = score + 3; end
+        if endsWith(pNorm, '/tpm.nii') || endsWith(pNorm, '/tpm.nii.gz'), score = score + 8; end
+        if contains(pNorm, 'avg152t1'), score = score + 6; end
+        if contains(pNorm, 'brainmask'), score = score + 2; end
 
         specialHit = false;
         for j = 1:numel(specialKeywords)
