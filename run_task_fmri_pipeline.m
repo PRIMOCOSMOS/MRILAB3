@@ -558,8 +558,8 @@ function files = discover_nifti_templates(searchDirs)
 end
 
 function bestPath = select_best_template(files, mustContain, preferSpecial, specialKeywords)
-    specialBoostPreferred = 5;  % 开启偏好时，显著提升特定关键词（如 East/MNI）候选得分
-    specialBoostDefault = 1;    % 未开启偏好时，仍保留轻微加分，避免同分情况下完全忽略
+    specialBoostWhenPreferred = 5;     % 开启偏好时，显著提升特定关键词（如 East/MNI）候选得分
+    specialBoostWhenNotPreferred = 1;  % 未开启偏好时，仍保留轻微加分，避免同分情况下完全忽略
     bestPath = '';
     bestScore = -inf;
     for i = 1:numel(files)
@@ -590,9 +590,9 @@ function bestPath = select_best_template(files, mustContain, preferSpecial, spec
         end
         if specialHit
             if preferSpecial
-                score = score + specialBoostPreferred;
+                score = score + specialBoostWhenPreferred;
             else
-                score = score + specialBoostDefault;
+                score = score + specialBoostWhenNotPreferred;
             end
         end
         if score > bestScore
@@ -626,6 +626,8 @@ function pri = load_segmentation_priors(anatSize, segTpl)
             warning('TPM 文件不是有效4D组织概率模板：%s', segTpl.tpmPath);
             return;
         end
+        % TPM 的组织顺序由配置显式定义（默认: 1->GM, 2->WM, 3->CSF）；
+        % 若所用 TPM 顺序不同，请在 cfg.templates.segmentation.tpmVolumeIndices 中调整。
         idx = double(segTpl.tpmVolumeIndices(:)');
         assert(numel(idx) == 3 && all(idx >= 1) && all(mod(idx, 1) == 0) && all(idx <= size(tpm, 4)), ...
             'cfg.templates.segmentation.tpmVolumeIndices 非法：当前值=%s；要求=长度为3的正整数，且每个索引在 [1, %d] 范围内。', ...
