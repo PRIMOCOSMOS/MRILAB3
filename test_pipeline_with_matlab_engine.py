@@ -48,7 +48,7 @@ def main() -> int:
 
     try:
         import matlab.engine  # type: ignore
-    except Exception as exc:  # pragma: no cover
+    except ModuleNotFoundError as exc:  # pragma: no cover
         print(
             "[error] matlab.engine is not available. "
             "Install from your MATLAB: <matlabroot>/extern/engines/python",
@@ -83,9 +83,12 @@ def main() -> int:
         eng.run_task_fmri_pipeline(nargout=0)
         print("[ok] full pipeline run finished.")
         return 0
-    except Exception as exc:  # pragma: no cover
+    except (matlab.engine.EngineError, matlab.engine.MatlabExecutionError) as exc:  # type: ignore[attr-defined]  # pragma: no cover
         print(f"[error] matlab.engine run failed: {exc}", file=sys.stderr)
         return 3
+    except Exception as exc:  # pragma: no cover
+        print(f"[error] unexpected failure: {exc}", file=sys.stderr)
+        return 4
     finally:
         if eng is not None:
             try:
