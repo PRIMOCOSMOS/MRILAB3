@@ -18,6 +18,24 @@ function cfg = task_fmri_pipeline_config()
     cfg.paths.anatDirCandidates = {'anat', 'T1Img', 'T1', 'Anat'}; % 旧版结构像子目录候选名；用途：兼容历史 DataRaw/SubXX 下的命名差异；影响：命中顺序不同会改变实际读取源。
     cfg.paths.funcDirCandidates = {'func', 'FunImg', 'fun', 'Func'}; % 旧版功能像子目录候选名；用途：兼容历史 DataRaw/SubXX 下的命名差异；影响：命中顺序不同会改变实际读取源。
 
+    % ============================== 模板管理参数块 =============================
+    cfg.templates.enabled = true; % 模板管理总开关；用途：集中管理分割先验与标准空间模板发现逻辑；影响：关闭则完全回退到无模板路径。
+    cfg.templates.searchDirs = { ...
+        fullfile(repoRoot, 'Templates'), ...
+        fullfile(cfg.paths.boldDataDir, 'Templates'), ...
+        fullfile(cfg.paths.derivativeDir, 'Template')}; % 模板搜索目录；用途：自动发现 TPM/MNI 等模板；影响：命中顺序与内容会影响自动选择结果。
+
+    cfg.templates.segmentation.enabled = true; % 分割模板先验开关；用途：在强度模型基础上融合 GM/WM/CSF 先验；影响：开启通常更稳健，关闭则纯强度分割。
+    cfg.templates.segmentation.tpmPath = ''; % 显式 TPM 路径（可选）；用途：手动指定组织概率模板；影响：指定后优先级最高。
+    cfg.templates.segmentation.tpmVolumeIndices = [1 2 3]; % TPM 体积索引（默认[GM WM CSF]）；用途：从4D TPM中抽取三组织先验；影响：索引错误会导致组织映射混乱。
+    cfg.templates.segmentation.preferEastAsian = true; % 是否优先 East Asian 模板；用途：在多候选模板中优先匹配东亚模板；影响：更贴近东亚受试者先验分布。
+    cfg.templates.segmentation.priorWeight = 0.35; % 先验融合权重[0,1]；用途：平衡强度似然与模板先验；影响：过高可能过度依赖模板，过低先验作用有限。
+
+    cfg.templates.normalize.targetTemplatePath = ''; % 显式标准空间模板路径（可选）；用途：手动指定最终目标模板（如MNI152）；影响：指定后将执行群体模板到目标模板的附加映射。
+    cfg.templates.normalize.preferMNI = true; % 自动发现时优先 MNI 相关模板；用途：在候选标准模板中优先选择MNI；影响：提高与常见群体分析空间一致性。
+    cfg.templates.normalize.groupToTargetDemonsIters = [80 40 20]; % 群体模板到目标模板 demons 迭代；用途：估计模板间非线性映射；影响：更多迭代通常提升贴合但耗时增加。
+    cfg.templates.normalize.groupToTargetDemonsSmoothing = 1.0; % 群体模板到目标模板位移场平滑；用途：约束模板间形变平滑性；影响：更大更平滑但细节贴合减弱。
+
     % ============================== 预处理参数块 =============================
     cfg.preproc.TR = 2.0; % 重复时间 TR（秒）；用途：时间轴换算、切片时序与GLM建模；影响：TR错误会导致时序校正与统计模型时间信息偏差。
 

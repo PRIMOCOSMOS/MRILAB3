@@ -62,6 +62,12 @@ BOLDDATA/
 10. 双阈值激活图（voxel + cluster）
 11. 现代可视化导出（2D/3D/体绘制）
 
+模板逻辑（standalone，不调用 SPM/DPABI API）：
+- 分割先验模板：GM/WM/CSF 的 TPM（默认体积索引 `[1 2 3]`，即 `[GM WM CSF]`，内部会映射到 CSF/GM/WM）
+- 群体模板：由本数据集 T1 在仓库内迭代构建（`Derivatives/Template/group_template.nii`）
+- 标准空间目标模板（可选）：自动/手动指定 MNI 类模板后，执行“群体模板 -> 目标模板”二段映射
+- East Asian 优先：自动发现多个 TPM 候选时，优先匹配 East Asian/Chinese 相关命名
+
 ---
 
 ## 运行方式
@@ -96,6 +102,15 @@ DPABI 预处理步骤（白盒映射）也全部内置在配置中，并可逐�
 - `cfg.preproc.pipeline.segment.enabled`
 - `cfg.preproc.pipeline.normalize.enabled`
 - `cfg.preproc.pipeline.smooth.enabled`
+
+模板管理关键参数（`task_fmri_pipeline_config.m`）：
+- `cfg.templates.searchDirs`
+- `cfg.templates.segmentation.tpmPath`
+- `cfg.templates.segmentation.tpmVolumeIndices`
+- `cfg.templates.segmentation.preferEastAsian`
+- `cfg.templates.segmentation.priorWeight`
+- `cfg.templates.normalize.targetTemplatePath`
+- `cfg.templates.normalize.preferMNI`
 
 中文 ctex PDF（如 `MRILAB3.pdf`）建议先提取文本再对照实现：
 

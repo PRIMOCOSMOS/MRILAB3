@@ -10,6 +10,7 @@ function run_task_fmri_pipeline()
 
     cfg = task_fmri_pipeline_config();
     ensure_dir(cfg.paths.derivativeDir);
+    tplCtx = resolve_template_context(cfg);
 
     subjects = discover_subjects(cfg.paths);
     assert(~isempty(subjects), '未发现被试目录（已检查 FunRaw/T1Raw 与 DataRaw 回退路径）。');
@@ -17,11 +18,11 @@ function run_task_fmri_pipeline()
     fprintf('\n=== [1/4] 预处理与配准 ===\n');
     subjData = struct([]);
     for i = 1:numel(subjects)
-        subjData(i) = preprocess_subject(subjects{i}, cfg); %#ok<AGROW>
+        subjData(i) = preprocess_subject(subjects{i}, cfg, tplCtx); %#ok<AGROW>
     end
 
     fprintf('\n=== [2/4] 模板构建与标准化 ===\n');
-    tpl = build_group_template(subjData, cfg);
+    tpl = build_group_template(subjData, cfg, tplCtx);
     for i = 1:numel(subjData)
         subjData(i) = normalize_subject_to_template(subjData(i), tpl, cfg);
     end
@@ -53,7 +54,7 @@ function subjects = discover_subjects(paths)
 end
 
 % ============================ 单被试预处理块 ==============================
-function out = preprocess_subject(subjID, cfg)
+function out = preprocess_subject(subjID, cfg, tplCtx)
     fprintf('[%s] preprocess...\n', subjID);
 
     if isfolder(cfg.paths.funcRawDir) && isfolder(cfg.paths.t1RawDir)
@@ -96,7 +97,7 @@ function out = preprocess_subject(subjID, cfg)
     [anatCoreg, tformAF] = module_coregister(anatVol, meanFunc, cfg.preproc);
 
     % --- 结构像分割（GM/WM/CSF） ---
-    seg = module_segment(anatCoreg, cfg.preproc);
+    seg = module_segment(anatCoreg, cfg.preproc, tplCtx);
 
     % --- 写中间结果 ---
     write_nifti_like(anatCoreg, anatInfo, fullfile(subjDer, 'anat', 'anat_coreg.nii'));
@@ -162,12 +163,12 @@ function [anatReg, tform] = module_coregister(anat, meanFunc, P)
     end
 end
 
-function seg = module_segment(anat, P)
+function seg = module_segment(anat, P, tplCtx)
     if isfield(P, 'pipeline') && isfield(P.pipeline, 'segment') ...
             && isfield(P.pipeline.segment, 'enabled') ...
             && P.pipeline.segment.enabled
         sp = P.pipeline.segment;
-        seg = segment_t1(anat, sp);
+        seg = segment_t1(anat, sp, tplCtx.segmentation);
     else
         seg.csf = zeros(size(anat), 'single');
         seg.gm = zeros(size(anat), 'single');
@@ -176,7 +177,7 @@ function seg = module_segment(anat, P)
 end
 
 % ============================ 群体模板构建块 ==============================
-function tpl = build_group_template(subjData, cfg)
+function tpl = build_group_template(subjData, cfg, tplCtx)
     fprintf('[group] building template...\n');
     ensure_dir(cfg.paths.templateDir);
 
@@ -187,6 +188,10 @@ function tpl = build_group_template(subjData, cfg)
     if ~cfg.preproc.pipeline.normalize.enabled
         tpl.volume = template;
         tpl.info = subjData(1).anatInfo;
+        tpl.groupTemplate = template;
+        tpl.groupInfo = subjData(1).anatInfo;
+        tpl.groupToTargetField = [];
+        tpl.hasTargetTemplate = false;
         tpl.path = fullfile(cfg.paths.templateDir, 'group_template.nii');
         write_nifti_like(template, tpl.info, tpl.path);
         return;
@@ -210,8 +215,30 @@ function tpl = build_group_template(subjData, cfg)
 
     tpl.volume = template;
     tpl.info = subjData(1).anatInfo;
+    tpl.groupTemplate = template;
+    tpl.groupInfo = subjData(1).anatInfo;
+    tpl.groupToTargetField = [];
+    tpl.hasTargetTemplate = false;
     tpl.path = fullfile(cfg.paths.templateDir, 'group_template.nii');
     write_nifti_like(template, tpl.info, tpl.path);
+
+    if tplCtx.normalize.hasTargetTemplate
+        fprintf('[group] mapping group template to target template: %s\n', tplCtx.normalize.targetPath);
+        [Dgt, groupInTarget] = imregdemons(template, tplCtx.normalize.targetVolume, ...
+            tplCtx.normalize.groupToTargetDemonsIters, ...
+            'AccumulatedFieldSmoothing', tplCtx.normalize.groupToTargetDemonsSmoothing);
+        tpl.groupToTargetField = Dgt;
+        tpl.hasTargetTemplate = true;
+        tpl.targetTemplate = tplCtx.normalize.targetVolume;
+        tpl.targetInfo = tplCtx.normalize.targetInfo;
+        tpl.targetPath = tplCtx.normalize.targetPath;
+        tpl.volume = groupInTarget;
+        tpl.info = tpl.targetInfo;
+        tpl.path = fullfile(cfg.paths.templateDir, 'group_template_in_target_space.nii');
+        write_nifti_like(groupInTarget, tpl.targetInfo, tpl.path);
+        write_nifti_like(tplCtx.normalize.targetVolume, tpl.targetInfo, ...
+            fullfile(cfg.paths.templateDir, 'target_template_used.nii'));
+    end
 end
 
 % ============================== 标准化和平滑 ==============================
@@ -221,13 +248,21 @@ function out = normalize_subject_to_template(in, tpl, cfg)
     V = size(in.func4d, 4);
     D = [];
     if NP.enabled
-        [D, ~] = imregdemons(in.anat, tpl.volume, ...
+        [D, ~] = imregdemons(in.anat, tpl.groupTemplate, ...
             NP.demonsIters, ...
             'AccumulatedFieldSmoothing', NP.demonsSmoothing);
         funcNorm = zeros(size(in.func4d), 'single');
         for t = 1:V
             funcNorm(:, :, :, t) = imwarp(in.func4d(:, :, :, t), D, 'cubic', ...
-                'OutputView', imref3d(size(tpl.volume)));
+                'OutputView', imref3d(size(tpl.groupTemplate)));
+        end
+        if tpl.hasTargetTemplate
+            funcNormTarget = zeros([size(tpl.targetTemplate), V], 'single');
+            for t = 1:V
+                funcNormTarget(:, :, :, t) = imwarp(funcNorm(:, :, :, t), tpl.groupToTargetField, ...
+                    'cubic', 'OutputView', imref3d(size(tpl.targetTemplate)));
+            end
+            funcNorm = funcNormTarget;
         end
     else
         funcNorm = in.func4d;
@@ -251,7 +286,12 @@ function out = normalize_subject_to_template(in, tpl, cfg)
 
     outDir = fullfile(in.subjDer, 'func_norm');
     ensure_dir(outDir);
-    write_nifti_4d(funcSmooth, tpl.info, fullfile(outDir, 'func_smooth_norm_4d.nii'));
+    if tpl.hasTargetTemplate
+        outRefInfo = tpl.targetInfo;
+    else
+        outRefInfo = tpl.info;
+    end
+    write_nifti_4d(funcSmooth, outRefInfo, fullfile(outDir, 'func_smooth_norm_4d.nii'));
 end
 
 % ============================== 一级统计分析 ==============================
@@ -411,6 +451,191 @@ function visualize_subject_result(subj, tpl, cfg)
     end
 end
 
+% ============================== 模板解析与管理 ==============================
+function tplCtx = resolve_template_context(cfg)
+    tplCtx = struct();
+    tplCtx.segmentation = struct('enabled', false, 'hasTpm', false, ...
+        'tpmPath', '', 'tpmVolumeIndices', [1 2 3], 'priorWeight', 0);
+    tplCtx.normalize = struct('hasTargetTemplate', false, 'targetPath', '', ...
+        'targetInfo', struct(), 'targetVolume', [], ...
+        'groupToTargetDemonsIters', [80 40 20], ...
+        'groupToTargetDemonsSmoothing', 1.0);
+
+    if ~isfield(cfg, 'templates') || ~cfg.templates.enabled
+        fprintf('[template] disabled.\n');
+        return;
+    end
+
+    Tc = cfg.templates;
+    candidateFiles = discover_nifti_templates(Tc.searchDirs);
+
+    % ---- segmentation priors (TPM) ----
+    if isfield(Tc, 'segmentation') && Tc.segmentation.enabled
+        tplCtx.segmentation.enabled = true;
+        tplCtx.segmentation.tpmVolumeIndices = Tc.segmentation.tpmVolumeIndices;
+        tplCtx.segmentation.priorWeight = Tc.segmentation.priorWeight;
+
+        tpmPath = '';
+        if isfield(Tc.segmentation, 'tpmPath') && ~isempty(Tc.segmentation.tpmPath) ...
+                && isfile(Tc.segmentation.tpmPath)
+            tpmPath = Tc.segmentation.tpmPath;
+        else
+            tpmPath = select_best_template(candidateFiles, {'tpm'}, ...
+                logical_if_exists(Tc.segmentation, 'preferEastAsian'), ...
+                {'east', 'asian', 'china', 'chinese', 'eastern'});
+        end
+
+        if ~isempty(tpmPath)
+            tplCtx.segmentation.hasTpm = true;
+            tplCtx.segmentation.tpmPath = tpmPath;
+            fprintf('[template] segmentation TPM: %s\n', tpmPath);
+        else
+            fprintf('[template] segmentation TPM not found, fallback to intensity-only segmentation.\n');
+        end
+    end
+
+    % ---- normalization target template (e.g., MNI152) ----
+    if isfield(Tc, 'normalize')
+        tplCtx.normalize.groupToTargetDemonsIters = Tc.normalize.groupToTargetDemonsIters;
+        tplCtx.normalize.groupToTargetDemonsSmoothing = Tc.normalize.groupToTargetDemonsSmoothing;
+        tgtPath = '';
+        if isfield(Tc.normalize, 'targetTemplatePath') && ~isempty(Tc.normalize.targetTemplatePath) ...
+                && isfile(Tc.normalize.targetTemplatePath)
+            tgtPath = Tc.normalize.targetTemplatePath;
+        else
+            tgtPath = select_best_template(candidateFiles, {'mni', 'icbm'}, ...
+                logical_if_exists(Tc.normalize, 'preferMNI'), ...
+                {'mni152', 'mni', 'icbm', 'template'});
+            if isempty(tgtPath)
+                tgtPath = select_best_template(candidateFiles, {'template'}, ...
+                    logical_if_exists(Tc.normalize, 'preferMNI'), ...
+                    {'mni152', 'mni', 'icbm', 'template'});
+            end
+        end
+
+        if ~isempty(tgtPath)
+            [tgtVol, tgtInfo] = read_template_volume(tgtPath);
+            tplCtx.normalize.hasTargetTemplate = true;
+            tplCtx.normalize.targetPath = tgtPath;
+            tplCtx.normalize.targetVolume = tgtVol;
+            tplCtx.normalize.targetInfo = tgtInfo;
+            fprintf('[template] normalization target: %s\n', tgtPath);
+        else
+            fprintf('[template] normalization target not found, keep group-template space.\n');
+        end
+    end
+end
+
+function tf = logical_if_exists(S, fieldName)
+    tf = false;
+    if isfield(S, fieldName) && ~isempty(S.(fieldName))
+        tf = logical(S.(fieldName));
+    end
+end
+
+function files = discover_nifti_templates(searchDirs)
+    files = {};
+    if isempty(searchDirs)
+        return;
+    end
+    for i = 1:numel(searchDirs)
+        d = searchDirs{i};
+        if ~ischar(d) && ~isstring(d)
+            continue;
+        end
+        d = char(d);
+        if ~isfolder(d)
+            continue;
+        end
+        nii = dir(fullfile(d, '**', '*.nii'));
+        niigz = dir(fullfile(d, '**', '*.nii.gz'));
+        hit = [nii; niigz];
+        for k = 1:numel(hit)
+            files{end + 1} = fullfile(hit(k).folder, hit(k).name); %#ok<AGROW>
+        end
+    end
+    files = unique(files);
+end
+
+function bestPath = select_best_template(files, mustContain, preferSpecial, specialKeywords)
+    bestPath = '';
+    bestScore = -inf;
+    for i = 1:numel(files)
+        p = lower(files{i});
+        hitAny = false;
+        for j = 1:numel(mustContain)
+            if contains(p, lower(mustContain{j}))
+                hitAny = true;
+            end
+        end
+        if ~hitAny
+            continue;
+        end
+
+        score = 0;
+        for j = 1:numel(mustContain)
+            if contains(p, lower(mustContain{j})), score = score + 3; end
+        end
+        if contains(p, 'template'), score = score + 2; end
+        if contains(p, '152'), score = score + 1; end
+
+        specialHit = false;
+        for j = 1:numel(specialKeywords)
+            if contains(p, lower(specialKeywords{j}))
+                specialHit = true;
+                break;
+            end
+        end
+        if specialHit
+            score = score + (4 * double(preferSpecial) + 1);
+        end
+        if score > bestScore
+            bestScore = score;
+            bestPath = files{i};
+        end
+    end
+end
+
+function [V, info] = read_template_volume(pathIn)
+    info = niftiinfo(pathIn);
+    V = single(niftiread(info));
+    if ndims(V) == 4
+        V = V(:, :, :, 1);
+    end
+end
+
+function pri = load_segmentation_priors(anatSize, segTpl)
+    pri = struct('available', false, 'csf', [], 'gm', [], 'wm', []);
+    if ~isfield(segTpl, 'enabled') || ~segTpl.enabled || ~segTpl.hasTpm
+        return;
+    end
+    if ~isfile(segTpl.tpmPath)
+        return;
+    end
+    try
+        info = niftiinfo(segTpl.tpmPath);
+        tpm = single(niftiread(info));
+        if ndims(tpm) < 4 || size(tpm, 4) < 3
+            warning('TPM 文件不是有效4D组织概率模板：%s', segTpl.tpmPath);
+            return;
+        end
+        idx = double(segTpl.tpmVolumeIndices(:)');
+        assert(numel(idx) == 3 && all(idx >= 1) && all(mod(idx, 1) == 0) && all(idx <= size(tpm, 4)), ...
+            'tpmVolumeIndices 非法。');
+        gm = imresize3(tpm(:, :, :, idx(1)), anatSize, 'linear');
+        wm = imresize3(tpm(:, :, :, idx(2)), anatSize, 'linear');
+        csf = imresize3(tpm(:, :, :, idx(3)), anatSize, 'linear');
+        gm = max(gm, 0); wm = max(wm, 0); csf = max(csf, 0);
+        ps = gm + wm + csf + eps('single');
+        pri.gm = gm ./ ps;
+        pri.wm = wm ./ ps;
+        pri.csf = csf ./ ps;
+        pri.available = true;
+    catch ME
+        warning('加载 TPM 先验失败（已回退强度分割）：%s', ME.message);
+    end
+end
+
 % ============================== I/O 与工具函数 ============================
 function [V, info] = read_single_volume(inputDir, outDir)
     ensure_dir(outDir);
@@ -540,7 +765,7 @@ function [anatReg, tform] = coregister_anat_to_func(anat, meanFunc, P)
     anatReg = imwarp(anat, tform, 'OutputView', Rfixed, 'InterpolationMethod', 'cubic');
 end
 
-function seg = segment_t1(anat, P)
+function seg = segment_t1(anat, P, segTpl)
     anat = single(anat);
     anat = anat - min(anat(:));
     anat = anat / max(eps, max(anat(:)));
@@ -571,6 +796,19 @@ function seg = segment_t1(anat, P)
     seg.csf = p1;
     seg.gm = p2;
     seg.wm = p3;
+
+    % 可选：融合模板先验（TPM），提升组织概率图稳定性
+    pri = load_segmentation_priors(size(anatCorr), segTpl);
+    if pri.available
+        w = min(max(double(segTpl.priorWeight), 0), 1);
+        seg.csf = (1 - w) * seg.csf + w * pri.csf;
+        seg.gm = (1 - w) * seg.gm + w * pri.gm;
+        seg.wm = (1 - w) * seg.wm + w * pri.wm;
+        ps2 = seg.csf + seg.gm + seg.wm + eps('single');
+        seg.csf = seg.csf ./ ps2;
+        seg.gm = seg.gm ./ ps2;
+        seg.wm = seg.wm ./ ps2;
+    end
 end
 
 function Xtask = build_task_regressors(names, onsetsSec, durationsSec, T, P)
