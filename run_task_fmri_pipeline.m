@@ -632,6 +632,14 @@ function files = discover_nifti_templates(searchDirs)
 end
 
 function bestPath = select_best_template(files, mustContain, preferSpecial, specialKeywords)
+    scoreHitMustContain = 3;
+    scoreContainsTemplate = 2;
+    scoreContains152 = 1;
+    scoreInTpmDir = 5;
+    scoreInCanonicalDir = 3;
+    scoreExactTpmFile = 8;
+    scoreContainsAvg152 = 6;
+    scoreContainsBrainMask = 2;
     specialBoostWhenPreferred = 5;     % 开启偏好时，显著提升特定关键词（如 East/MNI）候选得分
     specialBoostWhenNotPreferred = 1;  % 未开启偏好时，仍保留轻微加分，避免同分情况下完全忽略
     bestPath = '';
@@ -652,15 +660,15 @@ function bestPath = select_best_template(files, mustContain, preferSpecial, spec
 
         score = 0;
         for j = 1:numel(mustContain)
-            if contains(p, lower(mustContain{j})), score = score + 3; end
+            if contains(p, lower(mustContain{j})), score = score + scoreHitMustContain; end
         end
-        if contains(p, 'template'), score = score + 2; end
-        if contains(p, '152'), score = score + 1; end
-        if contains(pNorm, '/tpm/'), score = score + 5; end
-        if contains(pNorm, '/canonical/'), score = score + 3; end
-        if endsWith(pNorm, '/tpm.nii') || endsWith(pNorm, '/tpm.nii.gz'), score = score + 8; end
-        if contains(pNorm, 'avg152t1'), score = score + 6; end
-        if contains(pNorm, 'brainmask'), score = score + 2; end
+        if contains(p, 'template'), score = score + scoreContainsTemplate; end
+        if contains(p, '152'), score = score + scoreContains152; end
+        if contains(pNorm, '/tpm/'), score = score + scoreInTpmDir; end
+        if contains(pNorm, '/canonical/'), score = score + scoreInCanonicalDir; end
+        if endsWith(pNorm, '/tpm.nii') || endsWith(pNorm, '/tpm.nii.gz'), score = score + scoreExactTpmFile; end
+        if contains(pNorm, 'avg152t1'), score = score + scoreContainsAvg152; end
+        if contains(pNorm, 'brainmask'), score = score + scoreContainsBrainMask; end
 
         specialHit = false;
         for j = 1:numel(specialKeywords)

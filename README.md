@@ -128,7 +128,7 @@ DPABI 预处理步骤（白盒映射）也全部内置在配置中，并可逐�
 - `cfg.templates.normalize.preferMNI`
 
 模板路径推断（适配 SPM/DPABI 常见组织）：
-- 默认外部安装根目录：`D:\spm`、`D:\DPABI_V9.0_250415\DPARSF`
+- Windows 默认安装根目录示例：`D:\spm`、`D:\DPABI_V9.0_250415\DPARSF`（非 Windows 默认留空）
 - 会自动扩展搜索常见子目录：`tpm`、`canonical`、`Templates` 以及上级目录中的 `Templates`
 - 支持环境变量覆盖：`SPM_DIR`、`DPABI_DIR`、`DPARSF_DIR`
 
